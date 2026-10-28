@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+runtime/
+models/
+*.log
+*.wav
+*.mp3
+*.mp4
+*.key
+*.pem
