@@ -5,11 +5,15 @@ let statusInstance = "";
 let statusSequence = 0;
 let pollAbort = null;
 let pollError = false;
+let pointerNext = null;
+let pointerAbort = null;
+let pointerGeneration = 0;
 const $ = (id) => document.getElementById(id);
-async function send(path, data) {
+async function send(path, data, signal) {
   if (exiting) return;
-  const response = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Jarvis-Token": token}, body: JSON.stringify(data)});
+  const response = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Jarvis-Token": token}, body: JSON.stringify(data), signal});
   const result = await response.json();
+  if (signal && signal.aborted) return;
   if (!response.ok) throw new Error(result.error || "Request failed");
   $("error").hidden = true;
   if (!exiting) render(result);
@@ -19,6 +23,7 @@ function endSession(title, note) {
   exiting = true;
   clearInterval(pollTimer);
   if (pollAbort) pollAbort.abort();
+  cancelPointer();
   token = "";
   $("state").textContent = title;
   $("state-note").textContent = note;
@@ -89,6 +94,7 @@ document.querySelectorAll("[data-people]").forEach((button) => button.addEventLi
   }).catch(showError);
 }));
 function renderHand(hand) {
+  if (hand.mode !== "practice") cancelPointer();
   $("hand-label").textContent = {off: "OFF", practice: "PRACTICE", watching: "WATCHING"}[hand.mode] + (hand.move_cursor ? " / CURSOR ARMED" : "");
   $("practice").textContent = hand.mode === "practice" ? "Stop practice" : "Start practice";
   $("pad").classList.toggle("live", hand.mode === "practice");
@@ -100,13 +106,42 @@ function renderHand(hand) {
   $("hand-tracking").textContent = (hand.tracking_available ? "Live gesture tracking is available." : "Install the hand packages and verified model, then restart. Practice works now.") +
     (hand.allowed ? "" : " Real hand control needs --allow-hand-control.") + (hand.last_stop ? " Last stop: " + hand.last_stop + "." : "") + " Gesture clicks: " + hand.clicks + ".";
 }
+function cancelPointer() {
+  pointerGeneration += 1;
+  pointerNext = null;
+  if (pointerAbort) pointerAbort.abort();
+}
+async function sendPointer(point) {
+  if (exiting || !$("pad").classList.contains("live")) return;
+  pointerNext = point;
+  if (pointerAbort) return;
+  const generation = pointerGeneration;
+  while (pointerNext && !exiting && generation === pointerGeneration && $("pad").classList.contains("live")) {
+    const next = pointerNext;
+    pointerNext = null;
+    const controller = new AbortController();
+    pointerAbort = controller;
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 8000);
+    try {
+      await send("/api/hand/practice", {type: "pointer", x: next.x, y: next.y}, controller.signal);
+    } catch (error) {
+      pointerNext = null;
+      if (!exiting && generation === pointerGeneration) showError(timedOut ? new Error("Practice pointer request timed out. Move again to retry.") : error);
+      break;
+    } finally {
+      clearTimeout(timeout);
+      if (pointerAbort === controller) pointerAbort = null;
+    }
+  }
+}
 let lastMove = 0;
 $("pad").addEventListener("pointermove", (event) => {
   if (!$("pad").classList.contains("live") || Date.now() - lastMove < 80) return;
   lastMove = Date.now();
   const box = $("pad").getBoundingClientRect();
   const clamp = (value) => Math.min(1, Math.max(0, Math.round(value * 1000) / 1000));
-  send("/api/hand/practice", {type: "pointer", x: clamp((event.clientX - box.left) / box.width), y: clamp((event.clientY - box.top) / box.height)}).catch(showError);
+  sendPointer({x: clamp((event.clientX - box.left) / box.width), y: clamp((event.clientY - box.top) / box.height)});
 });
 $("practice").addEventListener("click", () => send("/api/hand/practice", {type: $("practice").textContent === "Stop practice" ? "stop" : "start"}).catch(showError));
 document.querySelectorAll("[data-gesture]").forEach((button) => button.addEventListener("click", () => {

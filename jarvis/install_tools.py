@@ -73,6 +73,10 @@ class WindowsJob:
         k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
         k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         k32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k32.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD, wintypes.LPVOID]
+        k32.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+        k32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k32.WaitForSingleObject.restype = wintypes.DWORD
         k32.OpenProcess.restype = wintypes.HANDLE
         k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         k32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -111,6 +115,74 @@ class WindowsJob:
         if self.handle:
             self._k32.TerminateJobObject(self.handle, 1)
 
+    def open_members(self):
+        """Retain handles before termination removes members from the job's process list."""
+        import ctypes
+        from ctypes import wintypes
+
+        class Members(ctypes.Structure):
+            _fields_ = [("assigned", wintypes.DWORD), ("listed", wintypes.DWORD), ("ids", ctypes.c_size_t * 4096)]
+
+        info = Members()
+        handles = []
+        complete = False
+        try:
+            if not self._k32.QueryInformationJobObject(self.handle, 3, ctypes.byref(info), ctypes.sizeof(info), None):
+                return None
+            if info.listed != info.assigned or info.listed > 4096:
+                return None
+            for pid in info.ids[:info.listed]:
+                handle = self._k32.OpenProcess(0x00100000 | 0x1000, False, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
+                if not handle:
+                    if ctypes.get_last_error() == 87:  # The listed process already exited before it could be opened.
+                        continue
+                    return None
+                handles.append(handle)
+                inside = wintypes.BOOL()
+                if not self._k32.IsProcessInJob(handle, self.handle, ctypes.byref(inside)):
+                    return None
+                if not inside.value:  # A reused PID must never make us wait for an unrelated process.
+                    self._k32.CloseHandle(handles.pop())
+            complete = True
+            return handles
+        finally:
+            if not complete:
+                for handle in handles:
+                    self._k32.CloseHandle(handle)
+
+    def wait_empty(self, handles):
+        """Await retained process handles as well as accounting: zero active members can precede handle cleanup."""
+        import ctypes
+        from ctypes import wintypes
+
+        class Accounting(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_int64) for name in (
+                "TotalUserTime", "TotalKernelTime", "ThisPeriodTotalUserTime", "ThisPeriodTotalKernelTime")]
+            _fields_ += [(name, wintypes.DWORD) for name in (
+                "TotalPageFaultCount", "TotalProcesses", "ActiveProcesses", "TotalTerminatedProcesses")]
+
+        if handles is None:
+            return False
+        deadline = time.monotonic() + STOP_SECONDS
+        try:
+            for handle in handles:
+                remaining = max(0, int((deadline - time.monotonic()) * 1000))
+                if self._k32.WaitForSingleObject(handle, remaining) != 0:
+                    return False
+            while True:
+                info = Accounting()
+                if not self._k32.QueryInformationJobObject(self.handle, 1, ctypes.byref(info), ctypes.sizeof(info), None):
+                    return False
+                if info.ActiveProcesses == 0:
+                    return True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                time.sleep(min(POLL_SECONDS, remaining))
+        finally:
+            for handle in handles:
+                self._k32.CloseHandle(handle)
+
     def close(self):
         if self.handle:
             self._k32.CloseHandle(self.handle)
@@ -136,28 +208,41 @@ def _signal_group(process, signal_number):
 
 def _end(process, job):
     """Stop what this command started, then reap it. Acts only on its own job or process group, never by name."""
-    if job is not None:
-        job.terminate()
-    else:
-        import signal
-        _signal_group(process, signal.SIGTERM)
-        deadline = time.monotonic() + STOP_SECONDS
-        while not _exited(process) and time.monotonic() < deadline:
-            time.sleep(POLL_SECONDS)
-        _signal_group(process, signal.SIGKILL)
+    members = None
     try:
-        if process.stdin is not None:
-            process.stdin.close()
-    except OSError:
-        pass
-    try:
-        process.wait(timeout=STOP_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
+        if job is not None:
+            try:
+                members = job.open_members()
+            finally:
+                job.terminate()
+        else:
+            import signal
+            _signal_group(process, signal.SIGTERM)
+            deadline = time.monotonic() + STOP_SECONDS
+            while not _exited(process) and time.monotonic() < deadline:
+                time.sleep(POLL_SECONDS)
+            _signal_group(process, signal.SIGKILL)
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except OSError:
+            pass
         try:
             process.wait(timeout=STOP_SECONDS)
         except subprocess.TimeoutExpired:
-            pass
+            process.kill()
+            try:
+                process.wait(timeout=STOP_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+        if job is not None:
+            retained, members = members, None  # wait_empty owns these handles, including exceptional paths.
+            return job.wait_empty(retained)
+        return True
+    finally:
+        if members is not None:
+            for handle in members:
+                job._k32.CloseHandle(handle)
 
 
 def contained(argv, root, env, timeout=COMMAND_SECONDS, cancel=None):
@@ -167,6 +252,7 @@ def contained(argv, root, env, timeout=COMMAND_SECONDS, cancel=None):
     deadline = time.monotonic() + timeout
     job = process = None
     stopped = None
+    settled = True
     try:
         if os.name == "nt":
             job = WindowsJob()
@@ -195,10 +281,12 @@ def contained(argv, root, env, timeout=COMMAND_SECONDS, cancel=None):
     finally:
         try:
             if process is not None:
-                _end(process, job)
+                settled = _end(process, job)
         finally:
             if job is not None:
                 job.close()
+    if not settled:
+        raise SetupError("Setup could not confirm its helper processes stopped. Close Jarvis before retrying.")
     if stopped == "cancelled":
         raise SetupCancelled()
     if stopped == "timeout":
