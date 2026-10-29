@@ -1,5 +1,5 @@
 "use strict";
-/* Jarvis setup. The three-choice quickstart mirrors jarvis/quickstart.py (tests/test_quickstart.py).
+/* Jarvis setup. The one-question-per-screen quickstart mirrors jarvis/quickstart.py (tests/test_quickstart.py).
    The older detailed planner below mirrors jarvis/planner.py (tests/test_planner.py) and stays exported for it.
    The hosted page never calls an API and never shows a key field. */
 (function (root) {
@@ -229,57 +229,155 @@
       (/MacIntel/i.test(info.platform || "") && Number(info.maxTouchPoints) > 1);
   }
 
-  /* Three-choice quickstart. Mirrors jarvis/quickstart.py; tests/test_quickstart.py checks both agree. */
+  /* Step-by-step quickstart. Mirrors jarvis/quickstart.py; tests/test_quickstart.py checks both agree. */
   const QUICKSTART_SCHEMA = "jarvis-quickstart-catalog/1";
-  const CHOICES_SCHEMA = "jarvis-quickstart-choices/1";
-  const CHOICE_KEYS = ["role", "budget", "existing"];
+  const CHOICES_SCHEMA = "jarvis-quickstart-choices/2";
+  const CHOICES_SCHEMAS = ["jarvis-quickstart-choices/1", CHOICES_SCHEMA];
+  const REQUIRED_KEYS = ["role", "budget", "existing"];
+  const OPTION_KEYS = ["dictation", "reply", "automation"];
+  const CHOICE_KEYS = REQUIRED_KEYS.concat(OPTION_KEYS);
   const CHOICE_ERRORS = {
-    shape: "Choose a role, a monthly budget and an existing tool.",
-    role: "Choose a role from the list.",
-    budget: "Choose a whole-dollar monthly budget from 0 to 100.",
-    existing: "Choose an existing tool from the list.",
+    shape: "Choose a purpose, a monthly budget and an AI option.",
+    role: "Choose a purpose from the list.",
+    budget: "Choose a whole-dollar monthly budget from $0 to $10,000.",
+    existing: "Choose an AI option from the list.",
+    dictation: "Choose a typing or voice option from the list.",
+    reply: "Choose a reply option from the list.",
+    automation: "Choose an automation option from the list.",
   };
+  const STATUSES = ["builtin", "external", "manual", "later", "off"];
+  const BUDGET_MAX = 10000;
   const findId = (items, id) => items.find((item) => item.id === id) || null;
 
+  /* Older three-field choices gain the catalog defaults for dictation, reply and automation. Unknown fields are refused. */
   function validateChoices(data, catalog) {
-    if (!isPlainObject(data) || Object.keys(data).length !== CHOICE_KEYS.length || !CHOICE_KEYS.every((key) => own(data, key))) throw new Error(CHOICE_ERRORS.shape);
+    if (!isPlainObject(data) || !REQUIRED_KEYS.every((key) => own(data, key)) || Object.keys(data).some((key) => !CHOICE_KEYS.includes(key))) throw new Error(CHOICE_ERRORS.shape);
     const role = data.role;
     let budget = data.budget;
     const existing = data.existing;
     if (typeof role !== "string" || !findId(catalog.roles, role)) throw new Error(CHOICE_ERRORS.role);
     const limits = catalog.budget;
-    if (typeof budget === "string" && /^(0|[1-9][0-9]{0,3})$/.test(budget)) budget = Number(budget);
+    if (typeof budget === "string" && /^(0|[1-9][0-9]{0,4})$/.test(budget)) budget = Number(budget);
     if (typeof budget !== "number" || !Number.isInteger(budget) || budget < limits.min || budget > limits.max) throw new Error(CHOICE_ERRORS.budget);
     if (typeof existing !== "string" || !findId(catalog.existing, existing)) throw new Error(CHOICE_ERRORS.existing);
-    return {role, budget, existing};
+    const result = {role, budget, existing};
+    OPTION_KEYS.forEach((key) => {
+      const value = own(data, key) ? data[key] : catalog.defaults[key];
+      if (typeof value !== "string" || !findId(catalog[key], value)) throw new Error(CHOICE_ERRORS[key]);
+      result[key] = value;
+    });
+    return result;
+  }
+
+  /* Structural check of quickstart-catalog.json. Mirrors validate_catalog() in jarvis/quickstart.py. */
+  function checkCatalog(data) {
+    const need = (condition, message) => { if (!condition) throw new Error("Quickstart catalog: " + message); };
+    const text = (value) => typeof value === "string" && Array.from(value).length > 0 && Array.from(value).length <= 600 && !value.includes(String.fromCharCode(0x2014));
+    const https = (value) => typeof value === "string" && value.length <= 300 && /^https:\/\/[^\s"'<>\\]+$/.test(value);
+    const whole = (value) => typeof value === "number" && Number.isInteger(value);
+    const keys = (value, required, extra) => isPlainObject(value) && required.every((key) => own(value, key)) && Object.keys(value).every((key) => required.includes(key) || (extra || []).includes(key));
+    need(isPlainObject(data) && data.schema === QUICKSTART_SCHEMA, "unsupported schema");
+    need(keys(data, ["schema", "defaults", "release", "roles", "budget", "existing", "dictation", "reply", "automation", "providers", "features", "notes", "budget_note", "steps"]), "unexpected or missing sections");
+    const {providers, features, notes} = data;
+    need([providers, features, notes].every((table) => isPlainObject(table) && Object.keys(table).length > 0), "tables missing");
+    ["roles", "existing"].concat(OPTION_KEYS).forEach((name) => {
+      const items = data[name];
+      need(Array.isArray(items) && items.length > 0 && items.length <= 12, name + " list missing");
+      need(items.every((item) => isPlainObject(item) && typeof item.id === "string" && /^[a-z][a-z_]{0,23}$/.test(item.id)), name + " ids invalid");
+      need(new Set(items.map((item) => item.id)).size === items.length, "duplicate ids in " + name);
+      need(items.every((item) => text(item.label) && Array.from(item.label).length <= 60 && text(item.hint)), name + " labels missing");
+    });
+    const budget = data.budget;
+    const budgetKeys = ["min", "max", "step", "slider_max", "large_from"];
+    need(keys(budget, budgetKeys) && budgetKeys.every((key) => whole(budget[key])), "budget range missing");
+    need(budget.min === 0 && budget.step === 1 && budget.max === BUDGET_MAX, "budget must be whole dollars from 0 to 10000");
+    need(budget.slider_max > 0 && budget.slider_max <= budget.max && budget.large_from > 0 && budget.large_from <= budget.max, "budget slider or large amount out of range");
+    need(Object.keys(features).sort().join() === "camera,hand", "features table must list camera and hand");
+    Object.values(features).forEach((feature) => need(keys(feature, ["name", "note", "step"]) && ["name", "note", "step"].every((key) => text(feature[key])), "feature text missing"));
+    data.roles.forEach((role) => {
+      need(keys(role, ["id", "label", "hint", "features", "title", "summary", "suggest"]) && text(role.title) && text(role.summary), "role fields invalid");
+      need(Array.isArray(role.features) && role.features.length > 0 && new Set(role.features).size === role.features.length
+        && role.features.every((name) => ["camera", "hand"].includes(name)), "role features unknown");
+      need(keys(role.suggest, OPTION_KEYS) && OPTION_KEYS.every((key) => typeof role.suggest[key] === "string" && findId(data[key], role.suggest[key])), "role suggestion unknown");
+    });
+    data.existing.forEach((item) => {
+      need(keys(item, ["id", "label", "hint", "zero", "paid", "zero_notes", "paid_notes"]), "existing fields invalid");
+      need(typeof item.zero === "string" && own(providers, item.zero) && typeof item.paid === "string" && own(providers, item.paid), "existing provider unknown");
+      ["zero_notes", "paid_notes"].forEach((key) => need(Array.isArray(item[key]) && item[key].every((note) => typeof note === "string" && own(notes, note)), "existing notes unknown"));
+    });
+    OPTION_KEYS.forEach((name) => data[name].forEach((item) => {
+      need(keys(item, ["id", "label", "hint", "status", "name"], ["step", "note", "url"]) && STATUSES.includes(item.status) && text(item.name), name + " option invalid");
+      need(["step", "note"].every((key) => !own(item, key) || text(item[key])) && (!own(item, "url") || https(item.url)), name + " option text invalid");
+      /* Unbuilt tools never get install steps; manual setups always point to a guide. */
+      need(item.status !== "later" || (own(item, "note") && !own(item, "step")), "later options need a note and no step");
+      need(item.status !== "manual" || (own(item, "step") && own(item, "url")), "manual options need a step and a guide");
+    }));
+    Object.values(providers).forEach((provider) => {
+      need(keys(provider, ["short", "name", "kind", "setup_url", "summary", "step"], ["model", "limit_url"]) && ["cloud", "local"].includes(provider.kind), "provider fields invalid");
+      need(https(provider.setup_url) && ["short", "name", "summary", "step"].every((key) => text(provider[key])), "provider fields missing");
+      need(!own(provider, "model") || text(provider.model), "provider model invalid");
+      need(!own(provider, "limit_url") || https(provider.limit_url), "provider limit link invalid");
+    });
+    need(Object.values(notes).every(text) && own(notes, "large_budget"), "note text missing");
+    need(text(data.budget_note), "budget note missing");
+    const stepKeys = ["download", "start", "dashboard", "practice"];
+    need(keys(data.steps, stepKeys) && stepKeys.every((key) => text(data.steps[key])), "steps missing");
+    const release = data.release;
+    const releaseKeys = ["windows_zip", "status", "source_zip", "source_repo", "agent_guide", "feedback"];
+    need(keys(release, releaseKeys) && ["pending", "available"].includes(release.status), "release status unknown");
+    need(releaseKeys.filter((key) => key !== "status").every((key) => https(release[key])), "release links must be https");
+    need(keys(data.defaults, CHOICE_KEYS), "defaults missing");
+    const canonical = validateChoices(data.defaults, data);
+    need(CHOICE_KEYS.every((key) => canonical[key] === data.defaults[key]), "defaults are not canonical");
+    return data;
   }
 
   function recommend(data, catalog) {
     const choices = validateChoices(data, catalog);
     const role = findId(catalog.roles, choices.role);
     const existing = findId(catalog.existing, choices.existing);
+    const options = OPTION_KEYS.map((key) => findId(catalog[key], choices[key]));
     const paid = choices.budget > 0;
     const providerId = paid ? existing.paid : existing.zero;
     const provider = catalog.providers[providerId];
     const features = role.features.slice();
     const tradeoffs = existing[paid ? "paid_notes" : "zero_notes"].map((note) => catalog.notes[note])
-      .concat(features.map((name) => catalog.features[name].note), [catalog.budget_note]);
+      .concat(features.map((name) => catalog.features[name].note), options.filter((option) => own(option, "note")).map((option) => option.note));
+    if (choices.budget >= catalog.budget.large_from) tradeoffs.push(catalog.notes.large_budget);
+    tradeoffs.push(catalog.budget_note);
     const steps = [catalog.steps.download, catalog.steps.start, provider.step]
-      .concat(features.map((name) => catalog.features[name].step), [catalog.steps.dashboard]);
+      .concat(features.map((name) => catalog.features[name].step), options.filter((option) => own(option, "step")).map((option) => option.step), [catalog.steps.dashboard]);
     if (features.includes("hand")) steps.push(catalog.steps.practice);
+    const stack = [{part: "desk", name: features.map((name) => catalog.features[name].name).join(" and "), status: "builtin"},
+      {part: "ai", name: provider.short + (own(provider, "model") ? " (" + provider.model + ")" : ""), status: "external"}];
+    ["input", "reply", "automation"].forEach((part, index) => {
+      const option = options[index];
+      const row = {part, name: option.name, status: option.status};
+      if (own(option, "url")) row.url = option.url;
+      stack.push(row);
+    });
     const plan = {choices, provider: providerId, features, title: role.title + " with " + provider.name,
-      summary: role.summary + " " + provider.summary, tradeoffs, setup_url: provider.setup_url, steps};
+      summary: role.summary + " " + provider.summary, stack, steps, tradeoffs, setup_url: provider.setup_url};
     if (own(provider, "model")) plan.model = provider.model;
     return plan;
   }
 
-  /* Returns null when the address carries no choices; throws when it carries invalid ones. */
+  /* Returns null when the address carries no choices; throws when it carries invalid or repeated ones. */
   function choicesFromQuery(search, catalog) {
     const params = new URLSearchParams(search);
     if (!CHOICE_KEYS.some((key) => params.has(key))) return null;
     const data = {};
-    CHOICE_KEYS.forEach((key) => { if (params.has(key)) data[key] = params.get(key); });
+    CHOICE_KEYS.forEach((key) => {
+      if (params.getAll(key).length > 1) throw new Error(CHOICE_ERRORS.shape);
+      if (params.has(key)) data[key] = params.get(key);
+    });
     return validateChoices(data, catalog);
+  }
+
+  function choicesQuery(choices) {
+    const params = new URLSearchParams();
+    CHOICE_KEYS.forEach((key) => params.set(key, String(choices[key])));
+    return "?" + params.toString();
   }
 
   function isLoopbackPage(where, forced) {
@@ -316,26 +414,63 @@
       pricingChecked: day(data.pricing_checked) ? data.pricing_checked : "", validUntil: day(data.valid_until) ? data.valid_until : ""};
   }
 
+  function dollars(value) {
+    return "$" + String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
   function budgetLabel(value) {
-    return value === 0 ? "$0, no paid AI" : "$" + value + " a month";
+    return value === 0 ? "$0, free options only" : dollars(value) + " a month";
   }
 
-  /* A saved choices file is untrusted: at most 2 KiB, no duplicate keys, exact fields, fixed error text. */
+  /* A saved choices file is untrusted: at most 2 KiB, no duplicate keys, exact fields, fixed error text.
+     Files from the earlier three-question page (schema /1) still load through the same migration. */
   const IMPORT_LIMIT = 2048;
   const IMPORT_ERROR = "Choose a Jarvis choices file saved from this setup page (under 2 KB).";
   function importedChoices(text, catalog) {
     try {
       if (typeof text !== "string" || new TextEncoder().encode(text).length > IMPORT_LIMIT) throw new Error();
       const data = parseImportJson(text);
-      if (!isPlainObject(data) || Object.keys(data).length !== 2 || data.schema !== CHOICES_SCHEMA || !own(data, "choices")) throw new Error();
+      if (!isPlainObject(data) || Object.keys(data).length !== 2 || !CHOICES_SCHEMAS.includes(data.schema) || !own(data, "choices")) throw new Error();
       return validateChoices(data.choices, catalog);
     } catch (error) {
       throw new Error(IMPORT_ERROR);
     }
   }
 
+  /* Optional read-aloud for AI replies on the local setup page. Uses only voices the browser marks as on-device
+     (localService === true), never a remote voice and never the microphone. Speaks only when asked. */
+  function createReader(synth, Utterance) {
+    const usable = Boolean(synth) && typeof Utterance === "function" && ["speak", "cancel", "getVoices"].every((name) => typeof synth[name] === "function");
+    function localVoice() {
+      if (!usable) return null;
+      let voices;
+      try { voices = Array.from(synth.getVoices() || []); } catch (error) { return null; }
+      const local = voices.filter((voice) => voice !== null && typeof voice === "object" && voice.localService === true);
+      const english = (voice) => typeof voice.lang === "string" && /^en\b/i.test(voice.lang);
+      return local.find((voice) => voice.default === true && english(voice)) || local.find(english) || local[0] || null;
+    }
+    function cancel() {
+      if (!usable) return;
+      try { synth.cancel(); } catch (error) { /* nothing is speaking */ }
+    }
+    function speak(text, done) {
+      cancel();
+      const voice = localVoice();
+      if (!voice || typeof text !== "string" || !text.trim()) return false;
+      const utterance = new Utterance(text.slice(0, 4000));
+      utterance.voice = voice;
+      if (typeof voice.lang === "string") utterance.lang = voice.lang;
+      const finish = () => { if (done) done(); };
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      synth.speak(utterance);
+      return true;
+    }
+    return {usable, hasVoice: () => Boolean(localVoice()), speak, cancel};
+  }
+
   const api = {validateAnswers, buildPlan, defaultAnswers, readProviderCatalog, importedAnswers, isMobilePlanner, money,
-    validateChoices, recommend, choicesFromQuery, isLoopbackPage, isSafeLaunchUrl, readQuickstartState, readBudget, budgetLabel, importedChoices, IMPORT_LIMIT, IMPORT_ERROR, CHOICE_ERRORS, QUICKSTART_SCHEMA, CHOICES_SCHEMA};
+    validateChoices, checkCatalog, recommend, choicesFromQuery, choicesQuery, isLoopbackPage, isSafeLaunchUrl, readQuickstartState, readBudget, budgetLabel, dollars,
+    importedChoices, parseImportJson, createReader, IMPORT_LIMIT, IMPORT_ERROR, CHOICE_ERRORS, CHOICE_KEYS, OPTION_KEYS, QUICKSTART_SCHEMA, CHOICES_SCHEMA, CHOICES_SCHEMAS};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => boot(api));
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -344,8 +479,9 @@
 const MESSAGES = {
   catalog: "Setup could not load. Refresh the page to try again.",
   local: "Jarvis could not reach its setup service on this computer. Close this page and open the Jarvis start file again.",
-  query: "That link had choices this page does not recognize, so the defaults are shown.",
-  save: "Your choices were not saved. Try again.",
+  query: "That link had choices this page does not recognize, so the questions start from the beginning.",
+  save: "Your answers were not saved on this computer. Choose See my plan to try again.",
+  saveBusy: "Wait for the install to finish before changing your answers.",
   keyEmpty: "Paste a key first.",
   key: "The key was not saved. Check that you copied the whole key, then try again.",
   keySaved: "Key saved on this computer. The field was cleared.",
@@ -356,6 +492,8 @@ const MESSAGES = {
   tested: "Connection works.",
   promptEmpty: "Type a question first.",
   chat: "No reply. Check the key and your internet connection, then try again.",
+  noVoice: "No voice installed on this computer was found, so the reply stays as text.",
+  stopped: "Stopped reading aloud.",
   install: "Install did not start. Try again.",
   installIdle: "Downloads only what your plan needs. Nothing is switched on.",
   installRunning: "Installing. You can keep this page open.",
@@ -367,7 +505,7 @@ const MESSAGES = {
   exited: "Setup closed. You can close this page.",
   copied: "Link copied. Open it on your Windows computer.",
   copyFailed: "Select the link above and copy it yourself.",
-  savedJson: "Choices saved. The file holds your three answers only, nothing secret.",
+  savedJson: "Choices saved. The file holds your six answers only, nothing secret.",
   meterNote: "Jarvis reserves $0.01 per paid attempt and stops when this installation's allowance is used. Actual provider charges may differ. Use a provider hard spend limit too.",
   meterFree: "NVIDIA trial access and local Ollama chat do not draw on this allowance. NVIDIA trial use still depends on NVIDIA's own limits and eligibility.",
   budgetUnavailable: "Paid AI paused: local allowance information is unavailable.",
@@ -375,16 +513,25 @@ const MESSAGES = {
   budgetPaused: "Paid AI paused: this installation's local allowance is used up, past its review date or unavailable. Offline features and free providers still work.",
   meterZero: "At $0 Jarvis sends no paid OpenAI or Anthropic requests.",
   importBad: "Choose a Jarvis choices file saved from this setup page (under 2 KB).",
+  importSave: "The saved choices were not stored on this computer. Try again.",
   imported: "Saved choices loaded. Nothing was switched on.",
 };
+
+const STEPS = ["role", "budget", "existing", "dictation", "reply", "automation"];
+const SUGGESTED = ["dictation", "reply", "automation"];
+const PARTS = {desk: "Desk", ai: "AI chat", input: "Talk or type", reply: "Replies", automation: "Automation"};
+const STATUS_LABELS = {builtin: "In Jarvis", external: "Outside Jarvis", manual: "Manual setup", later: "Not built in", off: "Off"};
 
 function boot(api) {
   const $ = (id) => document.getElementById(id);
   const meta = document.querySelector('meta[name="jarvis-mode"]');
   const forced = meta ? meta.content : "auto";
-  const state = {catalog: null, choices: null, token: "", local: false, server: null, phone: false, busy: false, polls: 0, budgetTimer: 0};
-  const CONTROLS = ["role", "budget", "existing"];
+  const RESULT = STEPS.length;
+  const state = {catalog: null, choices: null, step: 0, token: "", local: false, server: null, phone: false, busy: false, polls: 0,
+    touched: new Set(), reader: null, speaking: false};
   const money = (value) => "$" + value.toFixed(2);
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  const control = (index) => (STEPS[index] === "budget" ? $("budget") : $(STEPS[index]));
 
   function el(tag, attributes, children) {
     const node = document.createElement(tag);
@@ -400,6 +547,12 @@ function boot(api) {
     $("status").textContent = message;
     $("status").classList.toggle("bad", Boolean(bad));
   }
+  function stepError(message) {
+    $("step-error").textContent = message;
+    $("step-error").hidden = !message;
+    STEPS.concat(["budget-exact"]).forEach((id) => $(id).removeAttribute("aria-invalid"));
+    if (message && state.step < RESULT) (STEPS[state.step] === "budget" ? $("budget-exact") : $(STEPS[state.step])).setAttribute("aria-invalid", "true");
+  }
   function notice(message) {
     $("notice").textContent = message;
     $("notice").hidden = !message;
@@ -413,72 +566,166 @@ function boot(api) {
       /* Only one error code is understood; any other body, including its text, is ignored. */
       const failure = new Error("request failed");
       try {
-        const body = await response.json();
-        failure.budget = response.status === 400 && body !== null && typeof body === "object" && body.code === "budget_unavailable";
+        const answer = await response.json();
+        failure.budget = response.status === 400 && answer !== null && typeof answer === "object" && answer.code === "budget_unavailable";
       } catch (error) { failure.budget = false; }
       throw failure;
     }
     return response.json();
   }
   const closed = () => document.body.classList.contains("closed");
-  function lockSelects() {
-    const locked = closed() || state.busy || Boolean(state.local && state.server && state.server.install === "running");
-    const focused = document.activeElement && CONTROLS.includes(document.activeElement.id) ? document.activeElement.id : state.refocus;
-    CONTROLS.forEach((id) => { $(id).disabled = locked; });
-    /* Disabling blurs the control; give keyboard focus back once it is usable again. */
-    state.refocus = locked ? focused || "" : "";
-    if (!locked && focused && document.activeElement !== $(focused)) $(focused).focus({preventScroll: true});
+  const installing = () => Boolean(state.local && state.server && state.server.install === "running");
+
+  /* One local request at a time: the question controls and the triggering button stay disabled until it settles. */
+  function lockControls() {
+    const locked = closed() || state.busy;
+    STEPS.concat(["budget-exact", "next", "back"]).forEach((id) => { $(id).disabled = locked; });
+    $("change").disabled = locked || installing();
   }
-  /* One local mutation at a time: the dropdowns and the triggering button stay disabled until it settles. */
   async function act(button, work) {
     if (state.busy) return;
     state.busy = true;
     if (button) button.disabled = true;
-    lockSelects();
+    lockControls();
     try { await work(); } finally {
       state.busy = false;
       if (button && !closed()) button.disabled = false;
-      if (state.local && state.choices) render();
-      lockSelects();
+      if (state.step === RESULT && state.choices) render();
+      lockControls();
     }
   }
 
   function fillSelect(id, items) {
-    $(id).replaceChildren(...items.map((item) => el("option", {value: String(item.id), text: item.label})));
+    $(id).replaceChildren(...items.map((item) => el("option", {value: item.id, text: item.label})));
   }
+  function entry(key, id) { return state.catalog[key === "role" ? "roles" : key].find((item) => item.id === id); }
   function provider(plan) { return state.catalog.providers[plan.provider]; }
 
+  /* ---------- questions ---------- */
+  function showHint(key) {
+    const chosen = entry(key, $(key).value);
+    $(key + "-hint").textContent = chosen ? chosen.hint : "";
+  }
+  function showBudget(value) {
+    const limits = state.catalog.budget;
+    const slider = Math.min(value, limits.slider_max);
+    $("budget").value = String(slider);
+    $("budget").style.setProperty("--fill", (slider / limits.slider_max * 100) + "%");
+    $("budget").setAttribute("aria-valuetext", api.budgetLabel(slider));
+    $("budget-value").textContent = value === 0 ? "$0, free only" : api.dollars(value) + " a month";
+  }
+  function fillStep(key) {
+    if (key === "budget") {
+      $("budget-exact").value = String(state.choices.budget);
+      showBudget(state.choices.budget);
+      return;
+    }
+    $(key).value = state.choices[key];
+    showHint(key);
+  }
+  /* Reads the current question into state.choices, or throws the fixed validation message. */
+  function readStep(key) {
+    const value = key === "budget" ? $("budget-exact").value.trim() : $(key).value;
+    const next = api.validateChoices(Object.assign({}, state.choices, {[key]: value}), state.catalog);
+    if (key === "role") {
+      /* Purpose suggests supported typing and reply choices the person has not picked yet. */
+      const suggest = entry("role", next.role).suggest;
+      SUGGESTED.forEach((name) => { if (!state.touched.has(name)) next[name] = suggest[name]; });
+    }
+    state.choices = next;
+  }
+
+  function show(index, how) {
+    state.step = index;
+    const result = index === RESULT;
+    $("wizard").hidden = result;
+    $("result").hidden = !result;
+    document.querySelectorAll("#wizard .step").forEach((section) => { section.hidden = section.dataset.step !== STEPS[index]; });
+    stepError("");
+    if (result) render();
+    else {
+      fillStep(STEPS[index]);
+      $("progress").textContent = "Question " + (index + 1) + " of " + STEPS.length;
+      $("progress-fill").style.setProperty("--done", ((index + 1) / STEPS.length * 100) + "%");
+      $("back").hidden = index === 0;
+      $("next").textContent = index === RESULT - 1 ? "See my plan" : "Next";
+    }
+    document.title = result ? "Your Jarvis plan" : "Set up Jarvis: question " + (index + 1) + " of " + STEPS.length;
+    const hash = "#" + (result ? "plan" : STEPS[index]);
+    if (how.push) history.pushState({jarvisStep: index}, "", hash);
+    else if (how.replace) history.replaceState({jarvisStep: index}, "", hash);
+    lockControls();
+    if (how.focus) {
+      (result ? $("plan-title") : control(index)).focus({preventScroll: true});
+      window.scrollTo(0, 0);
+    }
+  }
+
+  async function next() {
+    if (state.busy || closed()) return;
+    try { readStep(STEPS[state.step]); } catch (error) {
+      stepError(error.message);
+      (STEPS[state.step] === "budget" ? $("budget-exact") : $(STEPS[state.step])).focus();
+      return;
+    }
+    if (state.step < RESULT - 1) { show(state.step + 1, {push: true, focus: true}); return; }
+    await finish({push: true});
+  }
+
+  /* Hosted: show the plan. Local: the service saves the answers first; on failure the last question stays open to retry. */
+  async function finish(how) {
+    const same = state.local && state.server.choices && api.CHOICE_KEYS.every((key) => state.server.choices[key] === state.choices[key]);
+    if (state.local && !same) {
+      if (installing()) {
+        if (how.pop) history.replaceState({jarvisStep: state.step}, "", "#" + STEPS[state.step]);
+        stepError(MESSAGES.saveBusy);
+        return;
+      }
+      let saved = false;
+      await act(null, async () => { saved = await commit(state.choices); });
+      if (!saved) {
+        if (how.pop) history.replaceState({jarvisStep: state.step}, "", "#" + STEPS[state.step]);
+        stepError(MESSAGES.save);
+        control(state.step).focus();
+        return;
+      }
+    }
+    show(RESULT, {push: how.push, focus: true});
+  }
+
+  async function commit(choices) {
+    try {
+      const server = applyServer(await localJson("/api/quickstart/save", {choices}));
+      state.choices = server.choices || choices;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /* ---------- plan ---------- */
   function render() {
     const catalog = state.catalog;
     const plan = api.recommend(state.choices, catalog);
-    $("role").value = plan.choices.role;
-    showBudget(plan.choices.budget);
-    $("existing").value = plan.choices.existing;
-    $("plan").hidden = false;
     $("plan-title").textContent = plan.title;
     $("plan-summary").textContent = plan.summary;
-    const chips = plan.features.map((name) => el("li", {text: catalog.features[name].name}));
-    chips.push(el("li", {className: "ai", text: "AI: " + provider(plan).short + (plan.model ? " (" + plan.model + ")" : "")}));
-    $("plan-chips").replaceChildren(...chips);
+    $("plan-stack").replaceChildren(...plan.stack.map((row) => {
+      const name = [el("span", {text: row.name})];
+      if (row.url) name.push(el("a", {href: row.url, target: "_blank", rel: "noopener noreferrer", className: "guide", text: "Guide"}));
+      return el("li", {className: "row-" + row.status}, [el("span", {className: "part", text: PARTS[row.part]}), el("span", {className: "name"}, name),
+        el("span", {className: "tag", text: STATUS_LABELS[row.status]})]);
+    }));
     $("plan-steps").replaceChildren(...plan.steps.map((text, index) => {
       const done = state.local && index < 2;
       return el("li", {className: done ? "done" : ""}, done ? [el("span", {text}), el("span", {className: "done-tag", text: "Done"})] : [el("span", {text})]);
     }));
-    $("plan-caveat").textContent = plan.tradeoffs[0];
     $("plan-tradeoffs").replaceChildren(...plan.tradeoffs.map((text) => el("li", {text})));
+    $("budget-line").textContent = "Monthly budget for paid AI: " + api.budgetLabel(plan.choices.budget) + ".";
     $("provider-link").href = plan.setup_url;
     $("provider-link").textContent = provider(plan).short + " setup page";
     $("handoff-link").textContent = handoffLink(plan.choices);
     renderAllowance(plan);
     if (state.local) renderLocal(plan);
-    lockSelects();
-  }
-
-  function showBudget(value) {
-    $("budget").value = String(value);
-    $("budget-value").textContent = "$" + value;
-    $("budget").setAttribute("aria-valuetext", api.budgetLabel(value));
-    $("budget").style.setProperty("--fill", (value / state.catalog.budget.max * 100) + "%");
   }
 
   function renderAllowance(plan) {
@@ -490,6 +737,8 @@ function boot(api) {
     }
     const budget = state.local && state.server ? state.server.budget : null;
     $("budget-meter").hidden = !budget;
+    $("budget-paused").hidden = !budget || budget.available;
+    $("budget-paused").textContent = MESSAGES.budgetUnavailable;
     if (!budget) return;
     $("meter-bar").hidden = !budget.available;
     $("meter-month").hidden = !budget.available;
@@ -511,7 +760,7 @@ function boot(api) {
 
   function handoffLink(choices) {
     const url = new URL(location.href);
-    url.search = new URLSearchParams({role: choices.role, budget: String(choices.budget), existing: choices.existing}).toString();
+    url.search = api.choicesQuery(choices);
     url.hash = "";
     return url.href;
   }
@@ -535,12 +784,15 @@ function boot(api) {
       keyInput();
       $("key-help").href = plan.setup_url;
       $("key-help").textContent = "Get my " + info.short + " API key";
-      $("key-label").textContent = "Paste your " + info.short + " API key";
+      $("key-label").textContent = "Paste your " + info.short + " API key (optional)";
       $("key-form").hidden = saved;
       $("key-saved").hidden = !saved;
       $("key-saved-text").textContent = info.short + " key saved on this computer.";
     }
     $("ai-box").hidden = !(saved || info.kind === "local");
+    const speak = plan.choices.reply === "read_aloud";
+    $("speak-row").hidden = !speak;
+    if (!speak && $("speak").checked) { $("speak").checked = false; stopSpeaking(); }
     const install = server.install;
     $("install").disabled = install === "running" || closed();
     $("launch").disabled = install !== "ready" || closed();
@@ -558,61 +810,23 @@ function boot(api) {
     return next;
   }
 
-  function savedOrDefault() {
-    return (state.server && state.server.choices) || api.validateChoices(state.catalog.defaults, state.catalog);
+  /* ---------- read aloud: local page only, explicit opt-in, cancelled on Stop, Escape, leaving or hiding the page ---------- */
+  function stopSpeaking() {
+    if (state.reader) state.reader.cancel();
+    state.speaking = false;
+    $("stop-speaking").hidden = true;
   }
-
-  /* Saves choices to the local service. Its answer is authoritative; on failure the display rolls back. */
-  async function commit(next) {
-    state.choices = next;
-    render();
-    try {
-      const server = applyServer(await localJson("/api/quickstart/save", {choices: next}));
-      state.choices = server.choices || next;
-      return true;
-    } catch (error) {
-      state.choices = savedOrDefault();
-      status(MESSAGES.save, true);
-      return false;
-    } finally {
-      render();
-    }
+  function readAloud(text) {
+    if (!state.local || !$("speak").checked || state.choices.reply !== "read_aloud") return;
+    if (!state.reader) state.reader = api.createReader(window.speechSynthesis, window.SpeechSynthesisUtterance);
+    const started = state.reader.speak(text, () => { state.speaking = false; $("stop-speaking").hidden = true; });
+    state.speaking = started;
+    $("stop-speaking").hidden = !started;
+    if (!started) status(MESSAGES.noVoice);
   }
-
-  function formChoices() {
-    return api.validateChoices({role: $("role").value, budget: $("budget").value, existing: $("existing").value}, state.catalog);
-  }
-
-  /* The slider previews instantly; in local mode it saves once it rests, through the same serialized save. */
-  function slide(event) {
-    if (event.target.id !== "budget") return;
-    clearTimeout(state.budgetTimer);
-    if ($("budget").disabled) { render(); return; }
-    $("budget-value").textContent = "$" + $("budget").value;
-    if (!state.local) { choose(); return; }
-    $("budget").setAttribute("aria-valuetext", api.budgetLabel(Number($("budget").value)));
-    state.budgetTimer = setTimeout(choose, 450);
-  }
-
-  async function choose() {
-    let next;
-    try {
-      next = formChoices();
-    } catch (error) {
-      status(error.message, true);
-      render();
-      return;
-    }
-    notice("");
-    status("");
-    if (!state.local) {
-      state.choices = next;
-      render();
-      return;
-    }
-    if (state.busy || state.server.install === "running") { render(); return; }
-    await act(null, () => commit(next));
-  }
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && state.speaking) { stopSpeaking(); status(MESSAGES.stopped); } });
+  window.addEventListener("pagehide", stopSpeaking);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") stopSpeaking(); });
 
   async function saveKey(event) {
     event.preventDefault();
@@ -629,7 +843,6 @@ function boot(api) {
         status(MESSAGES.key, true);
       }
       input.value = "";
-      render();
     });
   }
 
@@ -650,18 +863,18 @@ function boot(api) {
     state.polls += 1;
     await new Promise((resolve) => setTimeout(resolve, 1500));
     try { applyServer(await localJson("/api/quickstart")); } catch (error) { state.server.install = "error"; }
-    render();
+    if (state.step === RESULT) render();
+    lockControls();
     pollInstall();
   }
 
   const actions = {
-    async "key-delete"(button) {
+    async "key-delete"() {
       const plan = api.recommend(state.choices, state.catalog);
       try {
         applyServer(await localJson("/api/quickstart/key/delete", {provider: plan.provider}));
         status(MESSAGES.keyDeleted);
       } catch (error) { status(MESSAGES.keyDelete, true); }
-      render();
     },
     async test() {
       if (needConsent()) return;
@@ -676,29 +889,27 @@ function boot(api) {
       if (needConsent()) return;
       const prompt = $("prompt").value.trim();
       if (!prompt) { status(MESSAGES.promptEmpty, true); $("prompt").focus(); return; }
+      stopSpeaking();
       const plan = api.recommend(state.choices, state.catalog);
       try {
         const result = await localJson("/api/quickstart/chat", {provider: plan.provider, prompt, consent: true});
         if (typeof result.reply !== "string") throw new Error("bad reply");
-        $("reply").textContent = result.reply.slice(0, 4000);
-        $("reply").hidden = false;
+        const reply = result.reply.slice(0, 4000);
+        $("chat-reply").textContent = reply;
+        $("chat-reply").hidden = false;
         status("");
+        readAloud(reply);
       } catch (error) {
-        $("reply").hidden = true;
+        $("chat-reply").hidden = true;
         status(error.budget ? MESSAGES.budgetPaused : MESSAGES.chat, true);
       }
       await refresh();
     },
     async install() {
-      clearTimeout(state.budgetTimer);
-      let current = state.choices;
-      try { current = formChoices(); } catch (error) { current = state.choices; }
-      if (!(await commit(current))) return;
       try {
         applyServer(await localJson("/api/quickstart/install", {consent: true}));
         status("");
       } catch (error) { status(MESSAGES.install, true); }
-      render();
       state.polls = 0;
       pollInstall();
     },
@@ -713,8 +924,9 @@ function boot(api) {
     async exit() {
       try {
         await localJson("/api/setup/exit", {});
+        stopSpeaking();
         document.body.classList.add("closed");
-        document.querySelectorAll("button, input, select, textarea").forEach((control) => { control.disabled = true; });
+        document.querySelectorAll("button, input, select, textarea").forEach((node) => { node.disabled = true; });
         status(MESSAGES.exited);
       } catch (error) { status(MESSAGES.exit, true); }
     },
@@ -743,12 +955,57 @@ function boot(api) {
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
-    if (!button || !state.choices || !own(actions, button.dataset.action)) return;
+    if (!button || !state.choices) return;
+    if (button.dataset.action === "stop-speaking") { stopSpeaking(); status(MESSAGES.stopped); return; }
+    if (button.dataset.action === "change") {
+      if (state.busy || installing()) return;
+      stopSpeaking();
+      status("");
+      show(0, {push: true, focus: true});
+      return;
+    }
+    if (!own(actions, button.dataset.action)) return;
     act(button, () => actions[button.dataset.action](button));
   });
-  $("choices").addEventListener("change", (event) => { if (event.target.id === "budget") slide(event); else choose(); });
-  $("choices").addEventListener("input", slide);
-  $("choices").addEventListener("submit", (event) => event.preventDefault());
+  $("wizard").addEventListener("submit", (event) => { event.preventDefault(); next(); });
+  $("back").addEventListener("click", () => { if (state.step > 0 && !state.busy) history.back(); });
+  $("wizard").addEventListener("change", (event) => {
+    const id = event.target.id;
+    if (SUGGESTED.includes(id)) state.touched.add(id);
+    if (STEPS.includes(id) && id !== "budget") {
+      showHint(id);
+      /* Keep answers current so browser Back and Forward never drop a choice made before pressing Next. */
+      try { readStep(id); } catch (error) { /* Next shows the fixed message */ }
+    }
+  });
+  /* The slider covers everyday amounts; the exact field takes any whole dollar up to the catalog maximum. */
+  $("wizard").addEventListener("input", (event) => {
+    if (event.target.id === "budget") {
+      $("budget-exact").value = $("budget").value;
+      showBudget(Number($("budget").value));
+      stepError("");
+    } else if (event.target.id === "budget-exact") {
+      const value = $("budget-exact").value.trim();
+      if (/^(0|[1-9][0-9]{0,4})$/.test(value) && Number(value) <= state.catalog.budget.max) { showBudget(Number(value)); stepError(""); }
+    }
+    if (event.target.id === "budget" || event.target.id === "budget-exact") {
+      try { readStep("budget"); } catch (error) { /* Next shows the fixed message */ }
+    }
+  });
+  $("speak").addEventListener("change", () => { if (!$("speak").checked) stopSpeaking(); });
+  window.addEventListener("popstate", (event) => {
+    const index = event.state && Number.isInteger(event.state.jarvisStep) ? event.state.jarvisStep : 0;
+    if (!state.choices || closed() || index < 0 || index > RESULT) return;
+    stopSpeaking();
+    if (state.busy) { history.pushState({jarvisStep: state.step}, "", "#" + (state.step === RESULT ? "plan" : STEPS[state.step])); return; }
+    if (index === RESULT) {
+      /* Browser Forward to the plan re-checks every answer and, locally, saves them first. */
+      try { api.validateChoices(state.choices, state.catalog); } catch (error) { show(0, {replace: true, focus: true}); return; }
+      finish({pop: true});
+      return;
+    }
+    show(index, {focus: true});
+  });
   $("key-form").addEventListener("submit", saveKey);
   $("import-choices").addEventListener("change", () => {
     const input = $("import-choices");
@@ -765,10 +1022,12 @@ function boot(api) {
       } finally {
         input.value = "";
       }
-      if (await commit(next)) status(MESSAGES.imported);
+      if (await commit(next)) {
+        SUGGESTED.forEach((key) => state.touched.add(key));
+        status(MESSAGES.imported);
+      } else status(MESSAGES.importSave, true);
     });
   });
-  function own(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
 
   function links(release) {
     $("feedback").href = release.feedback;
@@ -779,26 +1038,26 @@ function boot(api) {
     $("download").hidden = !ready;
     $("download-pending").hidden = ready;
     if (ready) $("download").href = release.windows_zip;
-    $("download-note").textContent = ready ? "Unzip it, then open Start-Jarvis-Windows.cmd." : "The first Windows package is still being prepared. Until then, the source ZIP below runs with Python 3.11 or newer through Start-Jarvis.cmd.";
+    $("download-note").textContent = ready ? "Unzip it, then open Start-Jarvis-Windows.cmd. Setup continues on your computer." : "The first Windows package is still being prepared. Until then, the source ZIP below runs with Python 3.11 or newer through Start-Jarvis.cmd.";
   }
 
   async function start() {
     try {
       const response = await fetch("quickstart-catalog.json", {cache: "no-store"});
       if (!response.ok) throw new Error("catalog unavailable");
-      state.catalog = await response.json();
-      if (state.catalog.schema !== api.QUICKSTART_SCHEMA) throw new Error("catalog schema");
+      state.catalog = api.checkCatalog(api.parseImportJson(await response.text()));
       fillSelect("role", state.catalog.roles);
-      CONTROLS.slice(1, 2).forEach((id) => ["min", "max", "step"].forEach((key) => $(id).setAttribute(key, String(state.catalog.budget[key]))));
-      fillSelect("existing", state.catalog.existing);
+      ["existing", "dictation", "reply", "automation"].forEach((key) => fillSelect(key, state.catalog[key]));
+      $("budget").max = String(state.catalog.budget.slider_max);
+      $("budget-exact").max = String(state.catalog.budget.max);
       state.choices = api.validateChoices(state.catalog.defaults, state.catalog);
       links(state.catalog.release);
     } catch (error) {
       $("mode-badge").textContent = "UNAVAILABLE";
-      $("choices").hidden = true;
       notice(MESSAGES.catalog);
       return;
     }
+    let ready = false;
     if (api.isLoopbackPage(location, forced)) {
       try {
         const session = await localJson("/api/session");
@@ -808,7 +1067,7 @@ function boot(api) {
         if (!server) throw new Error("not local");
         state.local = true;
         state.server = server;
-        if (server.choices) state.choices = server.choices;
+        if (server.choices) { state.choices = server.choices; ready = true; }
       } catch (error) {
         state.local = false;
         state.token = "";
@@ -817,18 +1076,20 @@ function boot(api) {
     } else {
       try {
         const linked = api.choicesFromQuery(location.search, state.catalog);
-        if (linked) state.choices = linked;
+        if (linked) { state.choices = linked; ready = true; }
       } catch (error) {
         notice(MESSAGES.query);
       }
     }
+    if (ready) SUGGESTED.forEach((key) => state.touched.add(key));
     state.phone = !state.local && api.isMobilePlanner(navigator);
     $("mode-badge").textContent = state.local ? "ON THIS COMPUTER" : state.phone ? "PHONE PLANNER" : "PLANNER";
     $("local").hidden = !state.local;
     $("get").hidden = state.local || state.phone;
     $("phone").hidden = !state.phone;
+    document.querySelectorAll(".local-only").forEach((node) => { node.hidden = !state.local; });
     $("privacy-link").hidden = state.local;
-    render();
+    show(ready ? RESULT : 0, {replace: true});
     if (state.local && state.server.install === "running") pollInstall();
   }
   start();

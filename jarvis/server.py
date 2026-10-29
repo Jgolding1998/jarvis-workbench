@@ -4,6 +4,7 @@ import argparse
 import hmac
 import json
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -245,21 +246,97 @@ class SetupContext:
         self.onboarding = onboarding or Onboarding(self.root)
 
 
+HEADER_SECONDS = 5.0
+BODY_SECONDS = 10.0
+MAX_CONNECTIONS = 16
+_BUSY = b'{"error":"Server busy"}'
+BUSY_RESPONSE = (b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: " + str(len(_BUSY)).encode()
+                 + b"\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
+                 b"Content-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nConnection: close\r\n\r\n" + _BUSY)
+
+
+class SocketDeadline:
+    """Shuts a connection down at a fixed time unless cancelled. It never fires after cancel() returns."""
+
+    def __init__(self, connection, seconds):
+        self.connection, self.lock = connection, threading.Lock()
+        self.cancelled = self.expired = False
+        self.timer = threading.Timer(seconds, self._expire)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def _expire(self):
+        with self.lock:
+            if self.cancelled:
+                return
+            self.expired = True
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def cancel(self):
+        with self.lock:
+            self.cancelled = True
+        self.timer.cancel()
+        return self.expired
+
+
 class LocalHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self.connections = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        super().__init__(*args, **kwargs)
 
     def get_request(self):
         connection, address = super().get_request()
         connection.settimeout(3)
         return connection, address
 
+    def process_request(self, request, address):
+        if not self.connections.acquire(blocking=False):
+            try:
+                request.sendall(BUSY_RESPONSE)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, address)
+        except BaseException:
+            self.connections.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self.connections.release()
+
+    def handle_error(self, request, address):
+        pass
+
 
 def make_handler(service, token, setup=None):
     setup = setup or SetupContext()
 
     class Handler(BaseHTTPRequestHandler):
+        def handle_one_request(self):
+            self._header_deadline = SocketDeadline(self.connection, HEADER_SECONDS)
+            try:
+                super().handle_one_request()
+            finally:
+                self._header_deadline.cancel()
+
         def parse_request(self):
-            accepted = super().parse_request()
+            try:
+                accepted = super().parse_request()
+            finally:
+                expired = self._header_deadline.cancel()
+            if expired:
+                self.close_connection = True
+                return False
             if accepted and self.request_version == "HTTP/0.9":
                 self.send_error(400)
                 return False
@@ -340,7 +417,15 @@ def make_handler(service, token, setup=None):
                 limit = 20000 if self.path.startswith("/api/quickstart/") else 8192 if self.path == "/api/setup/apply" else 2048
                 if not 1 <= length <= limit or self.headers.get("Content-Type") != "application/json":
                     raise ValueError("Send a small JSON request")
-                data = planner.parse_json(self.rfile.read(length))
+                body_deadline = SocketDeadline(self.connection, BODY_SECONDS)
+                try:
+                    raw = self.rfile.read(length)
+                finally:
+                    expired = body_deadline.cancel()
+                if expired:
+                    self.close_connection = True
+                    return
+                data = planner.parse_json(raw)
                 if not isinstance(data, dict):
                     raise ValueError("Expected an object")
                 if self.path.startswith("/api/quickstart/"):

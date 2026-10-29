@@ -27,6 +27,9 @@ class SiteBuildTests(unittest.TestCase):
             content = (output / "setup.html").read_text(encoding="utf-8")
             self.assertIn('name="jarvis-mode" content="hosted"', content)
             self.assertNotIn('name="jarvis-mode" content="auto"', content)
+            self.assertEqual(content, (output / "index.html").read_text(encoding="utf-8"))
+            self.assertIn('id="wizard"', content)
+            self.assertIn('id="g-hand-open"', (output / "practice.html").read_text(encoding="utf-8"))
             self.assertFalse((output / "runtime").exists())
             self.assertFalse((output / "jarvis").exists())
             for name in ("index.html", "setup.html", "privacy.html"):

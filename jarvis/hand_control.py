@@ -24,10 +24,14 @@ class GestureSettings:
     clap_close: float = 0.15
     clap_open: float = 0.25
     edge_margin: int = 8
+    lowered_gap: float = 2.0
+    lowered_release: float = 1.5
+    lowered_line: float = 0.6
 
     def __post_init__(self):
         numbers = (self.smoothing, self.dead_zone, self.pinch_down, self.pinch_up,
-                   self.click_cooldown, self.clap_close, self.clap_open)
+                   self.click_cooldown, self.clap_close, self.clap_open,
+                   self.lowered_gap, self.lowered_release, self.lowered_line)
         if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in numbers):
             raise ValueError("Gesture settings must be finite numbers")
         if not 0 <= self.smoothing < 1 or not 0 <= self.dead_zone < 0.45:
@@ -36,6 +40,8 @@ class GestureSettings:
             raise ValueError("Invalid gesture thresholds")
         if not 0.1 <= self.click_cooldown <= 5 or type(self.edge_margin) is not int or not 3 <= self.edge_margin <= 64:
             raise ValueError("Invalid click cooldown or edge margin")
+        if not 0.5 <= self.lowered_release < self.lowered_gap <= 10 or not 0.3 <= self.lowered_line <= 0.95:
+            raise ValueError("Invalid lowered-hand thresholds")
 
 
 def _point(landmark):
@@ -54,6 +60,15 @@ def _distance(hand, first, second):
     return math.hypot(ax - bx, ay - by)
 
 
+def _palm(hand):
+    points = [hand[index] for index in (0, 5, 9, 13, 17)]
+    return sum(x for x, _ in points) / 5, sum(y for _, y in points) / 5
+
+
+def _palm_length(hand):
+    return max(_distance(hand, 0, 9), 0.02)
+
+
 class HandController:
     def __init__(self, pointer: Pointer, width: int, height: int, settings=None, on_stop: Callable[[str], None] | None = None):
         if type(width) is not int or type(height) is not int or not 160 <= width <= 32768 or not 160 <= height <= 32768:
@@ -70,6 +85,7 @@ class HandController:
         self._last_sent = None
         self._previous = (width / 2, height / 2)
         self._left = self._right = self._click_ready = self._clap_armed = False
+        self._active_palm = self._ignored_palm = None
         self._last_click = float("-inf")
         self._lock = threading.RLock()
         self._notifications = []
@@ -127,6 +143,7 @@ class HandController:
         self._previous = self._bound(*initial_position)
         self._last_sent = None
         self._left = self._right = self._click_ready = self._clap_armed = False
+        self._active_palm = self._ignored_palm = None
         self._last_click = float("-inf")
         self.clicks = 0
         self._needs_release = True
@@ -167,6 +184,24 @@ class HandController:
             return
 
         if len(parsed) == 2:
+            upper, lower = sorted(parsed, key=lambda hand: _palm(hand)[1])
+            upper_palm, lower_palm = _palm(upper), _palm(lower)
+            gap = (lower_palm[1] - upper_palm[1]) / max(_palm_length(upper), _palm_length(lower))
+            if self._ignored_palm is not None and gap >= self.settings.lowered_release:
+                lowered = True
+            else:
+                lowered = gap >= self.settings.lowered_gap and lower_palm[1] >= self.settings.lowered_line
+            if lowered:
+                self._clap_armed = False
+                swapped = self._active_palm is not None and math.dist(lower_palm, self._active_palm) < math.dist(upper_palm, self._active_palm)
+                self._ignored_palm = lower_palm
+                if swapped:
+                    self._active_palm = upper_palm
+                    self._idle("Hands changed places; show one raised open hand")
+                    return
+                self._track(upper, now, " (lowered hand ignored)")
+                return
+            self._active_palm = self._ignored_palm = None
             a, b = parsed[0][0], parsed[1][0]
             distance = math.hypot(a[0] - b[0], a[1] - b[1])
             if distance >= self.settings.clap_open:
@@ -174,15 +209,24 @@ class HandController:
             elif distance <= self.settings.clap_close and self._clap_armed:
                 self._stop("Visual clap: hand control stopped")
                 return
-            self._left = self._right = self._click_ready = False
-            self.reason = "Two hands seen; bring them together to stop"
+            self._idle("Two hands seen; bring them together to stop")
             return
         if not parsed:
-            self._left = self._right = self._click_ready = False
-            self.reason = "No hand in view; pointer idle"
+            self._idle("No hand in view; pointer idle")
             return
+        palm = _palm(parsed[0])
+        if self._ignored_palm is not None and (self._active_palm is None or math.dist(palm, self._ignored_palm) < math.dist(palm, self._active_palm)):
+            self._idle("Lowered hand ignored; raise one open hand to point")
+            return
+        self._ignored_palm = None
+        self._track(parsed[0], now, "")
 
-        hand = parsed[0]
+    def _idle(self, reason):
+        self._left = self._right = self._click_ready = False
+        self.reason = reason
+
+    def _track(self, hand, now, note):
+        self._active_palm = _palm(hand)
         middle = _distance(hand, 4, 12)
         ring = _distance(hand, 4, 16)
         left_onset = not self._left and middle < self.settings.pinch_down
@@ -219,9 +263,9 @@ class HandController:
                 self.pointer.click(button)
                 self.clicks += 1
                 self._last_click = now
-                self.reason = button.capitalize() + " click"
+                self.reason = button.capitalize() + " click" + note
             else:
-                self.reason = "Tracking"
+                self.reason = "Tracking" + note
         except Exception:
             self._stop("Pointer action failed")
 

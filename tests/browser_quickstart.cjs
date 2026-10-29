@@ -1,9 +1,10 @@
 "use strict";
-/* Headless browser checks for web/setup.html with a mocked local API.
+/* Headless browser checks for the one-question-per-screen web/setup.html with a mocked local API.
    Usage: node tests/browser_quickstart.cjs [screenshot-dir]
    Prints "SKIP: ..." and exits 0 when no Chromium-based browser is installed.
-   Never touches a real Jarvis service, camera, cursor or provider: every request is
-   answered by the in-process mock, and any request to another origin fails the run. */
+   Never touches a real Jarvis service, camera, microphone, cursor, speaker or provider: every request is
+   answered by the in-process mock, speech synthesis is replaced by a recording fake, and any request to
+   another origin fails the run. */
 const http = require("node:http");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -21,6 +22,24 @@ const LEAK = "SERVER-ERROR-TEXT-" + "c:\\Users\\private";
 const TOKEN = "fixture-token-123";
 const MESSAGES_SOURCE = fs.readFileSync(path.join(WEB, "setup.js"), "utf8");
 const MESSAGES = Function('"use strict";' + /const MESSAGES = (\{[\s\S]*?\n\});/.exec(MESSAGES_SOURCE)[0].replace("const MESSAGES = ", "return ") )();
+const STEPS = ["role", "budget", "existing", "dictation", "reply", "automation"];
+const PARTS = {desk: "Desk", ai: "AI chat", input: "Talk or type", reply: "Replies", automation: "Automation"};
+const TAGS = {builtin: "In Jarvis", external: "Outside Jarvis", manual: "Manual setup", later: "Not built in", off: "Off"};
+const full = (choices) => lib.validateChoices(choices, catalog);
+
+/* Replaces speech synthesis with a recorder and makes any microphone request visible. Installed before page scripts. */
+const SPEECH_FAKE = `(() => {
+  const record = {spoken: [], cancels: 0, mic: 0, voices: [
+    {name: "Remote voice", lang: "en-US", localService: false, default: true},
+    {name: "Local voice", lang: "en-US", localService: true, default: false}]};
+  window.__speech = record;
+  const synth = {getVoices: () => record.voices, speak: (u) => { record.spoken.push({text: u.text, voice: u.voice && u.voice.name}); record.current = u; },
+    cancel: () => { record.cancels += 1; }, speaking: false, pending: false};
+  Object.defineProperty(window, "speechSynthesis", {value: synth, configurable: true});
+  window.SpeechSynthesisUtterance = function (text) { this.text = text; };
+  if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => { record.mic += 1; return Promise.reject(new Error("blocked")); };
+  for (const name of ["SpeechRecognition", "webkitSpeechRecognition"]) Object.defineProperty(window, name, {get: () => { record.mic += 1; return undefined; }, configurable: true});
+})();`;
 
 function findBrowser() {
   const env = process.env.JARVIS_TEST_BROWSER;
@@ -74,6 +93,7 @@ function json(res, status, data) {
   res.writeHead(status, {"Content-Type": "application/json", "Cache-Control": "no-store"});
   res.end(JSON.stringify(data));
 }
+mock.catalogText = null;
 const server = http.createServer((req, res) => {
   let body = "";
   req.on("data", (chunk) => { body += chunk; });
@@ -95,6 +115,7 @@ const server = http.createServer((req, res) => {
     if (p === "/setup" || p === "/setup.html") return serveFile(res, path.join(WEB, "setup.html"));
     if (p === "/hosted/setup.html") return serveFile(res, path.join(WEB, "setup.html"), (text) => text.replace('name="jarvis-mode" content="auto"', 'name="jarvis-mode" content="hosted"'));
     const name = p.replace(/^\/(hosted\/)?/, "");
+    if (name === "quickstart-catalog.json" && mock.catalogText !== null) { res.writeHead(200, {"Content-Type": "application/json"}); return res.end(mock.catalogText); }
     if (["setup.js", "setup.css", "quickstart-catalog.json", "favicon.svg"].includes(name)) return serveFile(res, path.join(WEB, name));
     if (p === "/" || p === "/dashboard") { res.writeHead(200, {"Content-Type": "text/html"}); return res.end("<!doctype html><title>Dashboard fixture</title><p id=dash>dashboard</p>"); }
     res.writeHead(404, {"Content-Type": "text/plain"});
@@ -112,6 +133,7 @@ const consoleText = [];
 const exceptions = [];
 let origin = "";
 const allowedOrigins = new Set();
+let session;
 function send(method, params) {
   return new Promise((resolve, reject) => {
     const id = ++nextId;
@@ -119,7 +141,6 @@ function send(method, params) {
     ws.send(JSON.stringify({id, method, params: params || {}, sessionId: session}));
   });
 }
-let session;
 async function evaluate(expression) {
   const result = await send("Runtime.evaluate", {expression, awaitPromise: true, returnByValue: true});
   if (result.exceptionDetails) throw new Error("evaluate failed: " + expression + " " + JSON.stringify(result.exceptionDetails.exception && result.exceptionDetails.exception.description));
@@ -146,15 +167,25 @@ function equal(actual, expected, label) {
 }
 const text = (id) => evaluate("document.getElementById(" + JSON.stringify(id) + ").textContent");
 const visible = (id) => evaluate("(() => { const n = document.getElementById(" + JSON.stringify(id) + "); return Boolean(n) && !n.closest('[hidden]') && n.getClientRects().length > 0; })()");
+const focused = () => evaluate("document.activeElement && document.activeElement.id");
+const currentStep = () => evaluate("(() => { if (!document.getElementById('result').hidden) return 'plan'; const s = [...document.querySelectorAll('#wizard .step')].filter(n => !n.hidden); return s.length === 1 ? s[0].dataset.step : 'steps:' + s.length; })()");
 async function select(id, value) {
   await evaluate(`(() => { const s = document.getElementById(${JSON.stringify(id)}); s.value = ${JSON.stringify(String(value))}; s.dispatchEvent(new Event("change", {bubbles: true})); })()`);
+}
+async function typeBudget(value) {
+  await evaluate(`(() => { const s = document.getElementById("budget-exact"); s.value = ${JSON.stringify(String(value))}; s.dispatchEvent(new Event("input", {bubbles: true})); })()`);
 }
 async function click(selector) {
   await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 }
 async function key(name) {
-  const codes = {ArrowRight: 39, ArrowLeft: 37, Home: 36, End: 35};
+  const codes = {ArrowRight: 39, ArrowLeft: 37, Home: 36, End: 35, Escape: 27, Enter: 13};
   for (const type of ["keyDown", "keyUp"]) await send("Input.dispatchKeyEvent", {type, key: name, code: name, windowsVirtualKeyCode: codes[name]});
+  await sleep(30);
+}
+async function nextStep(expected) {
+  await click("#next");
+  await waitFor(`(() => { const r = !document.getElementById('result').hidden; const s = [...document.querySelectorAll('#wizard .step')].find(n => !n.hidden); return ${JSON.stringify(expected)} === (r ? 'plan' : s && s.dataset.step); })()`, "step " + expected);
   await sleep(30);
 }
 async function noOverflow(label) {
@@ -180,77 +211,195 @@ async function navigate(url) {
 }
 async function open(pathname) {
   await navigate(origin + pathname);
-  await waitFor("(!document.getElementById('plan').hidden || !document.getElementById('notice').hidden)", "page ready " + pathname);
+  await waitFor("(!document.getElementById('wizard').hidden || !document.getElementById('result').hidden || !document.getElementById('notice').hidden)", "page ready " + pathname);
   await sleep(150);
 }
 async function noSecretAnywhere(label) {
-  const dump = await evaluate("document.documentElement.outerHTML + JSON.stringify([...document.querySelectorAll('input,textarea')].map(n => n.value)) + JSON.stringify(Object.assign({}, localStorage)) + JSON.stringify(Object.assign({}, sessionStorage)) + document.cookie");
-  check(!dump.includes(SECRET), label + ": key absent from page, fields and storage");
+  const dump = await evaluate("document.documentElement.outerHTML + JSON.stringify([...document.querySelectorAll('input,textarea')].map(n => n.value)) + JSON.stringify(Object.assign({}, localStorage)) + JSON.stringify(Object.assign({}, sessionStorage)) + document.cookie + JSON.stringify(history.state)");
+  check(!dump.includes(SECRET), label + ": key absent from page, fields, storage and history");
   check(!dump.includes(LEAK), label + ": server text absent from page");
 }
 function plan(choices) { return lib.recommend(choices, catalog); }
+const stackRows = () => evaluate("[...document.querySelectorAll('#plan-stack li')].map(li => [li.querySelector('.part').textContent, li.querySelector('.name span').textContent, li.querySelector('.tag').textContent, (li.querySelector('.guide') || {}).href || null])");
+const expectedRows = (choices) => plan(choices).stack.map((row) => [PARTS[row.part], row.name, TAGS[row.status], row.url || null]);
+async function planMatches(choices, label) {
+  const expected = plan(choices);
+  equal(await text("plan-title"), expected.title, "title parity " + label);
+  equal(await text("plan-summary"), expected.summary, "summary parity " + label);
+  equal(await stackRows(), expectedRows(choices), "stack parity " + label);
+  equal(await evaluate("[...document.querySelectorAll('#plan-steps li span:first-child')].map(n => n.textContent)"), expected.steps, "steps parity " + label);
+  equal(await evaluate("[...document.querySelectorAll('#plan-tradeoffs li')].map(n => n.textContent)"), expected.tradeoffs, "tradeoffs parity " + label);
+  equal(await evaluate("document.getElementById('provider-link').href"), expected.setup_url, "provider link " + label);
+  const limit = catalog.providers[expected.provider].limit_url || null;
+  equal(await evaluate("document.getElementById('limit-help').hidden ? null : document.getElementById('limit-link').href"), limit, "hard limit link " + label);
+}
+/* Walks the questions with the given answers using the Next button. Leaves the page on the plan, or on the
+   last question when stopBeforePlan is set. */
+async function walk(answers, stopBeforePlan) {
+  for (let index = 0; index < STEPS.length; index++) {
+    const step = STEPS[index];
+    if (own(answers, step)) {
+      if (step === "budget") await typeBudget(answers.budget);
+      else await select(step, answers[step]);
+    }
+    if (index === STEPS.length - 1 && stopBeforePlan) return;
+    await nextStep(index === STEPS.length - 1 ? "plan" : STEPS[index + 1]);
+  }
+}
+const own = (object, name) => Object.prototype.hasOwnProperty.call(object, name);
 
 /* ---------- scenarios ---------- */
 async function hostedDesktop() {
   await viewport(1280, 900, false);
   mock.requests = [];
   await open("/hosted/setup.html");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["office", "0", "none"], "hosted defaults");
-  equal(await text("plan-title"), plan(catalog.defaults).title, "hosted default title matches recommend()");
   equal(await text("mode-badge"), "PLANNER", "hosted badge");
-  check(await visible("get"), "hosted shows the Windows card");
-  check(!(await visible("local")) && !(await visible("phone")), "hosted hides local and phone cards");
-  const ready = catalog.release.status === "available";
-  check((await visible("download")) === ready && (await visible("download-pending")) === !ready, "download availability follows the catalog");
-  equal(await evaluate("document.getElementById('source-zip').href"), catalog.release.source_zip, "source ZIP link");
-  equal(await evaluate("[...document.querySelectorAll('.agent-guide')].map(a => a.href)"), [catalog.release.agent_guide, catalog.release.agent_guide], "agent guide links");
-  equal(await evaluate("document.getElementById('feedback').href"), catalog.release.feedback, "feedback link");
+  equal(await currentStep(), "role", "hosted opens on the first question");
+  equal(await text("progress"), "Question 1 of 6", "progress text");
+  check(!(await visible("back")), "no Back button on the first question");
+  equal(await evaluate("[...document.querySelectorAll('select, input[type=range], input[type=number]')].filter(n => n.getClientRects().length).length"), 1, "only one control visible on a question");
+  check(!(await visible("result")), "plan hidden until the questions are answered");
+  equal(await evaluate("document.querySelectorAll('svg.orb, .orb, .hud').length"), 0, "no reactor graphic or HUD panels");
   equal(await evaluate("document.querySelectorAll('input[type=password], #key-input').length"), 0, "hosted page has no key field");
-  equal(await evaluate("document.querySelectorAll('select').length"), 2, "exactly two dropdowns");
-  equal(await evaluate("(() => { const b = document.getElementById('budget'); return [b.type, b.min, b.max, b.step, b.value]; })()"), ["range", "0", "100", "1", "0"], "budget is a 0 to 100 whole-dollar slider");
-  equal(await evaluate("[document.getElementById('budget-value').textContent, document.getElementById('budget').getAttribute('aria-valuetext')]"), ["$0", "$0, no paid AI"], "slider shows its value");
-  check(await evaluate("document.querySelector('label[for=budget]') !== null && document.getElementById('budget-value').tagName === 'OUTPUT'"), "slider has a label and a visible output");
-  check(!(await visible("budget-meter")), "hosted page has no allowance meter");
-  check(await evaluate("document.querySelector('[data-action=\"import-choices\"]').offsetParent === null"), "hosted page has no load-choices button");
-  equal(await evaluate("[document.querySelectorAll('input[type=range]').length, document.querySelectorAll('select[multiple], input[type=checkbox]:not(#consent)').length]"), [1, 0], "one slider and no multiselects");
-  await shot("hosted-desktop");
-  await evaluate("document.getElementById('budget').focus()");
+  equal(await evaluate("[...document.getElementById('role').options].map(o => o.value)"), catalog.roles.map((r) => r.id), "purpose options from the catalog");
+  equal(await text("role-hint"), catalog.roles.find((r) => r.id === "office").hint, "default purpose hint");
+  equal(await evaluate("location.hash"), "#role", "first question has its own address");
+  await shot("01-hosted-purpose");
+
+  await select("role", "handsfree");
+  equal(await text("role-hint"), catalog.roles.find((r) => r.id === "handsfree").hint, "purpose hint follows the choice");
+  await nextStep("budget");
+  equal(await focused(), "budget", "focus moves to the slider");
+  equal(await text("progress"), "Question 2 of 6", "progress on question 2");
+  equal(await evaluate("location.hash"), "#budget", "question 2 address");
+  check(await visible("back"), "Back shown from question 2");
+  equal(await evaluate("(() => { const b = document.getElementById('budget'); return [b.type, b.min, b.max, b.step, b.value]; })()"), ["range", "0", "1000", "1", "0"], "slider is 0 to 1000 whole dollars");
+  equal(await evaluate("(() => { const b = document.getElementById('budget-exact'); return [b.type, b.min, b.max, b.step]; })()"), ["number", "0", "10000", "1"], "exact amount field allows up to 10000");
+  equal(await text("budget-value"), "$0, free only", "$0 is labelled free");
   for (let i = 0; i < 3; i++) await key("ArrowRight");
-  equal(await evaluate("[budget.value, document.getElementById('budget-value').textContent, document.getElementById('budget').getAttribute('aria-valuetext')]"), ["3", "$3", "$3 a month"], "arrow keys move the slider by one dollar");
-  equal(await text("plan-title"), plan({role: "office", budget: 3, existing: "none"}).title, "keyboard budget updates the plan");
+  equal(await evaluate("[budget.value, document.getElementById('budget-exact').value, document.getElementById('budget-value').textContent, budget.getAttribute('aria-valuetext')]"), ["3", "3", "$3 a month", "$3 a month"], "arrow keys move the slider by one dollar and fill the exact field");
   await key("End");
-  equal(await evaluate("budget.value"), "100", "End key reaches the maximum");
+  equal(await evaluate("[budget.value, document.getElementById('budget-exact').value]"), ["1000", "1000"], "End reaches the slider maximum");
   await key("Home");
-  equal(await evaluate("budget.value"), "0", "Home key reaches $0");
-  for (const choices of [{role: "developer", budget: 37, existing: "openai"}, {role: "office", budget: 1, existing: "anthropic"}, {role: "developer", budget: 50, existing: "openai"}, {role: "study", budget: 0, existing: "ollama"}, {role: "creator", budget: 10, existing: "anthropic"}]) {
-    await select("role", choices.role);
-    await select("budget", choices.budget);
-    await select("existing", choices.existing);
-    const expected = plan(choices);
-    equal(await text("plan-title"), expected.title, "title parity " + JSON.stringify(choices));
-    equal(await evaluate("[...document.querySelectorAll('#plan-steps li span:first-child')].map(n => n.textContent)"), expected.steps, "steps parity " + JSON.stringify(choices));
-    equal(await evaluate("[...document.querySelectorAll('#plan-tradeoffs li')].map(n => n.textContent)"), expected.tradeoffs, "tradeoffs parity " + JSON.stringify(choices));
-    equal(await evaluate("document.getElementById('provider-link').href"), expected.setup_url, "provider link " + JSON.stringify(choices));
-    const limit = catalog.providers[expected.provider].limit_url || null;
-    equal(await evaluate("document.getElementById('limit-help').hidden ? null : document.getElementById('limit-link').href"), limit, "hard limit link " + JSON.stringify(choices));
+  equal(await evaluate("budget.value"), "0", "Home returns to $0");
+  await typeBudget("5000");
+  equal(await evaluate("[budget.value, document.getElementById('budget-value').textContent]"), ["1000", "$5,000 a month"], "typed amount above the slider pins the slider and shows the amount");
+  await shot("02-hosted-budget");
+  for (const bad of ["10001", "12.5", "", "-4", "007"]) {
+    await typeBudget(bad);
+    await click("#next");
+    await sleep(60);
+    equal(await currentStep(), "budget", "invalid amount " + JSON.stringify(bad) + " stays on the question");
+    equal(await text("step-error"), lib.CHOICE_ERRORS.budget, "invalid amount " + JSON.stringify(bad) + " shows the fixed message");
+    equal(await evaluate("[document.getElementById('budget-exact').getAttribute('aria-invalid'), document.activeElement.id]"), ["true", "budget-exact"], "invalid amount is marked and focused " + JSON.stringify(bad));
   }
-  await noOverflow("hosted desktop");
+  await typeBudget("2500");
+  check(!(await visible("step-error")), "error clears once the amount is valid");
+  await nextStep("existing");
+  equal(await evaluate("[...document.getElementById('existing').options].map(o => o.value)"), catalog.existing.map((e) => e.id), "AI options from the catalog");
+  await click("#back");
+  await waitFor("location.hash === '#budget'", "Back button");
+  equal(await evaluate("[document.getElementById('budget-exact').value, document.getElementById('budget-value').textContent]"), ["2500", "$2,500 a month"], "Back keeps the typed amount");
+  equal(await focused(), "budget", "Back moves focus to the question");
+  await send("Runtime.evaluate", {expression: "history.back()"});
+  await waitFor("location.hash === '#role'", "browser Back");
+  equal(await currentStep(), "role", "browser Back shows question 1");
+  await send("Runtime.evaluate", {expression: "history.forward()"});
+  await waitFor("location.hash === '#budget'", "browser Forward");
+  equal(await currentStep(), "budget", "browser Forward shows question 2");
+  await nextStep("existing");
+  await select("existing", "chat_only");
+  equal(await text("existing-hint"), catalog.existing.find((e) => e.id === "chat_only").hint, "chat-only hint explains the subscription");
+  await nextStep("dictation");
+  equal(await evaluate("dictation.value"), "windows", "purpose suggests Windows voice typing for less mouse and keyboard");
+  await select("dictation", "wispr");
+  equal(await text("dictation-hint"), catalog.dictation.find((d) => d.id === "wispr").hint, "Wispr hint says there is no connector");
+  await shot("04-hosted-dictation");
+  await nextStep("reply");
+  equal(await evaluate("reply.value"), "read_aloud", "purpose suggests read aloud for less mouse and keyboard");
+  // A purpose change only re-suggests what the person has not picked.
+  for (const step of ["dictation", "existing", "budget", "role"]) {
+    await click("#back");
+    await waitFor(`location.hash === '#${step}'`, "back to " + step);
+  }
+  await select("role", "developer");
+  await nextStep("budget");
+  await nextStep("existing");
+  await nextStep("dictation");
+  equal(await evaluate("dictation.value"), "wispr", "picked dictation survives a purpose change");
+  await nextStep("reply");
+  equal(await evaluate("reply.value"), "none", "unpicked reply follows the new purpose");
+  await nextStep("automation");
+  equal(await text("next"), "See my plan", "last question offers the plan");
+  await select("automation", "agent_later");
+  equal(await text("automation-hint"), catalog.automation.find((a) => a.id === "agent_later").hint, "MCP hint says not built in");
+  await nextStep("plan");
+  const chosen = {role: "developer", budget: 2500, existing: "chat_only", dictation: "wispr", reply: "none", automation: "agent_later"};
+  equal(await focused(), "plan-title", "focus moves to the plan title");
+  equal(await evaluate("location.hash"), "#plan", "plan has its own address");
+  await planMatches(chosen, "walked plan");
+  check(await visible("download") || await visible("download-pending"), "plan shows the download as the next step");
+  check(!(await visible("local")) && !(await visible("phone")), "hosted plan hides local and phone panels");
+  equal(await evaluate("[...document.querySelectorAll('#result details')].filter(d => d.open).length"), 0, "cost details start collapsed");
+  check(!(await evaluate("document.getElementById('plan-tradeoffs').checkVisibility()")), "tradeoffs are not visible until opened");
+  check((await stackRows()).some((row) => row[2] === "Not built in"), "unbuilt automation is labelled as not built in");
+  equal(await evaluate("document.querySelectorAll('#result .local-only:not([hidden])').length"), 0, "local-only buttons stay hidden on the hosted page");
+  equal(await evaluate("[document.getElementById('speak-row').closest('[hidden]') !== null, window.__speech.spoken.length, window.__speech.mic]"), [true, 0, 0], "hosted page never offers or uses speech or the microphone");
+  await noOverflow("hosted plan");
+  await shot("07-hosted-plan");
+  await evaluate("document.querySelector('#result details').open = true");
+  await shot("08-hosted-plan-details");
+  await send("Runtime.evaluate", {expression: "history.back()"});
+  await waitFor("location.hash === '#automation'", "browser Back from the plan");
+  equal(await evaluate("automation.value"), "agent_later", "answers kept after Back from the plan");
+  await send("Runtime.evaluate", {expression: "history.forward()"});
+  await waitFor("location.hash === '#plan' && !document.getElementById('result').hidden", "browser Forward to the plan");
+  await click('[data-action="change"]');
+  await waitFor("location.hash === '#role'", "change answers");
+  equal(await focused(), "role", "Change answers focuses the first question");
+  equal(await evaluate("role.value"), "developer", "Change answers keeps the answers");
+
+  for (const choices of [{role: "developer", budget: 37, existing: "openai", dictation: "vosk", reply: "cloud_voice", automation: "calendar_email"},
+    {role: "office", budget: 1, existing: "anthropic", dictation: "keyboard", reply: "read_aloud", automation: "none"},
+    {role: "study", budget: 0, existing: "ollama", dictation: "windows", reply: "none", automation: "agent_later"},
+    {role: "creator", budget: 10000, existing: "nvidia", dictation: "wispr", reply: "read_aloud", automation: "none"},
+    {role: "handsfree", budget: 101, existing: "chat_only", dictation: "vosk", reply: "none", automation: "none"}]) {
+    await open("/hosted/setup.html" + lib.choicesQuery(choices));
+    equal(await currentStep(), "plan", "linked choices open the plan " + choices.role);
+    await planMatches(choices, JSON.stringify(choices));
+  }
+  check((await stackRows()).some((row) => row[2] === "Manual setup" && row[3] === catalog.dictation.find((d) => d.id === "vosk").url), "offline voice is a manual setup with its guide");
   await open("/hosted/setup.html?role=study&budget=25&existing=ollama");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["study", "25", "ollama"], "linked choices restore");
+  equal(await currentStep(), "plan", "old three-choice link opens the plan");
+  await planMatches(full({role: "study", budget: 25, existing: "ollama"}), "old link migrated");
+  equal(new URL(await text("handoff-link")).search, lib.choicesQuery(full({role: "study", budget: 25, existing: "ollama"})), "handoff link carries all six answers");
   const evil = "<img src=x onerror=alert(1)>";
-  await open("/hosted/setup.html?role=" + encodeURIComponent(evil) + "&budget=0&existing=none");
-  equal(await text("notice"), MESSAGES.query, "invalid link shows fixed notice");
-  check(!(await evaluate("document.body.innerHTML.includes('onerror')")), "invalid link value is not echoed");
+  for (const query of ["?role=" + encodeURIComponent(evil) + "&budget=0&existing=none", "?role=office&role=study&budget=0&existing=none", "?role=office&budget=10001&existing=none", "?role=office&budget=0&existing=none&reply=elevenlabs"]) {
+    await open("/hosted/setup.html" + query);
+    equal(await text("notice"), MESSAGES.query, "invalid link shows the fixed notice " + query.slice(0, 30));
+    equal(await currentStep(), "role", "invalid link starts the questions " + query.slice(0, 30));
+    check(!(await evaluate("document.body.innerHTML.includes('onerror')")), "invalid link value is not echoed");
+  }
   equal(await evaluate("role.value"), "office", "invalid link falls back to defaults");
-  await click('#get [data-action="save-json"]');
+  await open("/hosted/setup.html?role=office&budget=0&existing=none");
+  await click('[data-action="save-json"]');
   equal(await text("status"), MESSAGES.savedJson, "save JSON status");
   equal(mock.requests.length, 0, "hosted page made no API requests");
   mock.requests = [];
   await navigate(origin.replace("127.0.0.1", "localhost") + "/setup");
-  await waitFor("!document.getElementById('plan').hidden", "localhost page");
+  await waitFor("!document.getElementById('wizard').hidden", "localhost page");
   await sleep(200);
   equal(mock.requests.length, 0, "auto page on a non-loopback-IP host made no API requests");
   check(!(await visible("local")), "auto page on localhost name stays a planner");
+
+  // A malformed or duplicate-key catalog fails closed with the fixed message.
+  for (const broken of [JSON.stringify(Object.assign({}, catalog, {extra: 1})), JSON.stringify(catalog).replace('"schema"', '"schema":"x","schema"'), "{"]) {
+    mock.catalogText = broken;
+    await navigate(origin + "/hosted/setup.html");
+    await waitFor("!document.getElementById('notice').hidden", "broken catalog");
+    equal([await text("notice"), await visible("wizard"), await visible("result")], [MESSAGES.catalog, false, false], "broken catalog shows only the fixed message");
+  }
+  mock.catalogText = null;
 }
 
 async function hostedPhone() {
@@ -258,22 +407,28 @@ async function hostedPhone() {
   mock.requests = [];
   await open("/hosted/setup.html");
   equal(await text("mode-badge"), "PHONE PLANNER", "phone badge");
-  check(await visible("phone"), "phone card visible");
-  check(!(await visible("get")) && !(await visible("local")), "phone hides download and local cards");
-  await select("role", "developer");
-  await select("budget", "10");
-  const link = await text("handoff-link");
-  equal(new URL(link).search, "?role=developer&budget=10&existing=none", "handoff link carries the three choices only");
-  await click('#phone [data-action="copy-link"]');
+  await noOverflow("phone question");
+  await shot("10-phone-purpose");
+  await nextStep("budget");
+  await noOverflow("phone budget");
+  await shot("11-phone-budget");
+  await click("#back");
+  await waitFor("location.hash === '#role'", "phone back");
+  await walk({budget: 10, existing: "nvidia"});
+  check(await visible("phone"), "phone handoff shown on the plan");
+  check(!(await visible("get")) && !(await visible("local")), "phone hides download and local panels");
+  const choices = full({role: "office", budget: 10, existing: "nvidia", dictation: "windows"});
+  equal(new URL(await text("handoff-link")).search, lib.choicesQuery(choices), "handoff link carries the answers only");
+  await click('[data-action="copy-link"]');
   await waitFor("document.getElementById('status').textContent.length > 0", "copy status");
   check([MESSAGES.copied, MESSAGES.copyFailed].includes(await text("status")), "copy link gives a fixed message");
-  check(await evaluate("document.querySelector('#phone a[href=\"index.html#practice\"]') !== null"), "phone links to practice");
-  await noOverflow("phone");
-  await shot("hosted-phone");
+  check(await evaluate("document.querySelector('#phone a[href=\"practice.html#practice\"]') !== null"), "phone links to practice");
+  await noOverflow("phone plan");
+  await shot("12-phone-plan");
   equal(mock.requests.length, 0, "phone page made no API requests");
 }
 
-function route(key, handler) { mock.routes[key] = handler; }
+function route(name, handler) { mock.routes[name] = handler; }
 function last(pathname) { return mock.requests.filter((item) => item.path === pathname).pop(); }
 
 async function localFlow() {
@@ -283,26 +438,31 @@ async function localFlow() {
   mock.requests = [];
   await open("/setup");
   await waitFor("document.getElementById('mode-badge').textContent === 'ON THIS COMPUTER'", "local badge");
-  check(await visible("local"), "local card visible");
-  check(!(await visible("get")) && !(await visible("phone")), "local hides download and phone cards");
-  check(await visible("key-input"), "key field shown for a cloud recommendation");
+  equal(await currentStep(), "role", "fresh local setup starts the questions");
+  equal(mock.requests.map((r) => r.method + " " + r.path), ["GET /api/session", "GET /api/quickstart"], "local load only reads session and state");
+  equal(await evaluate("document.querySelectorAll('#key-input').length"), 0, "no key field while answering questions");
+  const answers = {role: "office", budget: 25, existing: "nvidia", dictation: "keyboard", reply: "read_aloud", automation: "none"};
+  await walk(answers, true);
+  equal(mock.requests.filter((r) => r.method === "POST").length, 0, "nothing saved before the last question");
+
+  // A failed save keeps the last question open and recovers on retry.
+  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
+  await click("#next");
+  await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.save)}`, "save error");
+  equal(await currentStep(), "automation", "failed save stays on the last question");
+  check(!(await evaluate("document.getElementById('next').disabled")), "Next is usable again after a failed save");
+  equal(await focused(), "automation", "focus returns to the question after a failed save");
+  await shot("20-local-save-failed");
+  delete mock.routes["POST /api/quickstart/save"];
+  await nextStep("plan");
+  const save = last("/api/quickstart/save");
+  equal(save && save.body, {choices: answers}, "save sends all six answers");
+  equal(save && save.token, TOKEN, "save sends the session token");
+  check(await visible("key-input"), "key field shown on the local plan for a cloud provider");
   equal(await evaluate("[ki => ki.type, ki => ki.autocomplete].map(f => f(document.getElementById('key-input')))"), ["password", "off"], "key field is masked with autocomplete off");
   equal(await evaluate("[...document.querySelectorAll('#plan-steps li.done')].length"), 2, "download and start steps marked done locally");
-  equal(mock.requests.map((r) => r.method + " " + r.path), ["GET /api/session", "GET /api/quickstart"], "local load only reads session and state");
   check(await evaluate("document.getElementById('launch').disabled"), "launch disabled before install is ready");
-
-  await select("role", "developer");
-  await waitFor("true");
-  await sleep(100);
-  const save = last("/api/quickstart/save");
-  equal(save && save.body, {choices: {role: "developer", budget: 0, existing: "none"}}, "save sends exact choices");
-  equal(save && save.token, TOKEN, "save sends the session token");
-
-  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
-  await select("budget", "25");
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.save)}`, "save error");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["developer", "0", "none"], "failed save rolls the display back");
-  delete mock.routes["POST /api/quickstart/save"];
+  await planMatches(answers, "local plan");
 
   // Key: empty, failure, success.
   await click('#key-form button[type="submit"]');
@@ -324,7 +484,7 @@ async function localFlow() {
   equal(await evaluate("document.getElementById('key-input').value"), "", "key field cleared after success");
   await noSecretAnywhere("after key save");
   check(await visible("ai-box"), "AI chat offered once a key is saved");
-  await shot("local-desktop");
+  await shot("21-local-plan");
 
   // Test connection and chat.
   await evaluate("document.getElementById('ai-box').open = true");
@@ -348,11 +508,45 @@ async function localFlow() {
   await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.chat)}`, "chat error");
   const reply = "<img src=x onerror=window.pwned=1> plain reply";
   route("POST /api/quickstart/chat", (req, res) => json(res, 200, {reply}));
+
+  // Read aloud: offered only for the read-aloud answer, off until ticked, on-device voice only, stoppable.
+  check(await visible("speak-row"), "read-aloud option shown for the read-aloud answer");
+  equal(await evaluate("document.getElementById('speak').checked"), false, "read aloud is off until ticked");
   await click('[data-action="chat"]');
-  await waitFor("!document.getElementById('reply').hidden", "chat reply");
-  equal(await text("reply"), reply, "reply shown as text");
-  equal(await evaluate("[document.querySelectorAll('#reply img').length, window.pwned === undefined]"), [0, true], "reply is not parsed as HTML");
+  await waitFor("!document.getElementById('chat-reply').hidden", "chat reply");
+  equal(await text("chat-reply"), reply, "reply shown as text");
+  equal(await evaluate("[document.querySelectorAll('#chat-reply img').length, window.pwned === undefined]"), [0, true], "reply is not parsed as HTML");
   equal(last("/api/quickstart/chat").body, {provider: "nvidia", prompt: "Hello", consent: true}, "chat body");
+  equal(await evaluate("window.__speech.spoken.length"), 0, "nothing spoken without the tick");
+  await click("#speak");
+  await click('[data-action="chat"]');
+  await waitFor("window.__speech.spoken.length === 1", "reply spoken");
+  equal(await evaluate("window.__speech.spoken"), [{text: reply, voice: "Local voice"}], "reply spoken with the on-device voice, never the remote default");
+  check(await visible("stop-speaking"), "Stop shown while speaking");
+  let cancels = await evaluate("window.__speech.cancels");
+  await key("Escape");
+  check((await evaluate("window.__speech.cancels")) > cancels && !(await visible("stop-speaking")), "Escape cancels speech");
+  equal(await text("status"), MESSAGES.stopped, "Escape reports that speech stopped");
+  await click('[data-action="chat"]');
+  await waitFor("window.__speech.spoken.length === 2", "second reply spoken");
+  cancels = await evaluate("window.__speech.cancels");
+  await click('[data-action="stop-speaking"]');
+  check((await evaluate("window.__speech.cancels")) > cancels && !(await visible("stop-speaking")), "Stop cancels speech");
+  await click('[data-action="chat"]');
+  await waitFor("window.__speech.spoken.length === 3", "third reply spoken");
+  cancels = await evaluate("window.__speech.cancels");
+  await evaluate("Object.defineProperty(document, 'visibilityState', {get: () => 'hidden', configurable: true}); document.dispatchEvent(new Event('visibilitychange')); delete document.visibilityState; true");
+  check((await evaluate("window.__speech.cancels")) > cancels, "hiding the page cancels speech");
+  cancels = await evaluate("window.__speech.cancels");
+  await evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))");
+  check((await evaluate("window.__speech.cancels")) > cancels, "leaving the page cancels speech");
+  await evaluate("window.__speech.voices = [{name: 'Remote voice', lang: 'en-US', localService: false, default: true}]");
+  await click('[data-action="chat"]');
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.noVoice)}`, "no local voice");
+  equal(await evaluate("window.__speech.spoken.length"), 3, "no remote voice fallback");
+  equal(await evaluate("window.__speech.mic"), 0, "microphone and speech recognition never requested");
+  await click("#speak");
+  await shot("22-local-chat-read-aloud");
 
   // Key delete.
   route("POST /api/quickstart/key/delete", (req, res) => json(res, 500, {error: LEAK}));
@@ -374,15 +568,15 @@ async function localFlow() {
   await click('[data-action="install"]');
   equal(last("/api/quickstart/install").body, {consent: true}, "install body");
   await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installRunning)}`, "install running");
+  check(await evaluate("document.getElementById('change').disabled"), "answers cannot change during install");
   await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "install ready", 10000);
   equal(await text("install"), "Install again", "install button after ready");
+  check(!(await evaluate("document.getElementById('change').disabled")), "answers can change after install");
   delete mock.routes["GET /api/quickstart"];
-  mock.state.install = {state: "error", message: LEAK};
   route("POST /api/quickstart/install", (req, res) => { mock.state.install = {state: "error", message: LEAK}; json(res, 200, mock.state); });
   await click('[data-action="install"]');
   await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installError)}`, "install error state");
   await noSecretAnywhere("after install");
-
   check(await evaluate("document.getElementById('launch').disabled"), "launch disabled after a failed install");
   mock.installOutcome = "ready";
   delete mock.routes["POST /api/quickstart/install"];
@@ -416,7 +610,7 @@ async function localFlow() {
 
   // Safe launch navigates to the returned loopback address.
   mock.routes = {};
-  mock.state = freshState({choices: {role: "office", budget: 0, existing: "none"}, install: {state: "ready", message: LEAK}});
+  mock.state = freshState({choices: full({role: "office", budget: 0, existing: "none"}), install: {state: "ready", message: LEAK}});
   await open("/setup");
   route("POST /api/quickstart/launch", (req, res) => json(res, 200, {url: origin + "/"}));
   await click('[data-action="launch"]');
@@ -424,9 +618,8 @@ async function localFlow() {
   check(true, "safe launch opened the dashboard address");
 }
 
-
 async function waitIdle(label) {
-  await waitFor("!document.getElementById('role').disabled", label || "dropdowns unlocked", 10000);
+  await waitFor("!document.getElementById('change').disabled", label || "idle", 10000);
   await sleep(50);
 }
 async function setImportFile(name, content) {
@@ -436,8 +629,8 @@ async function setImportFile(name, content) {
   await send("DOM.setFileInputFiles", {files: [file], objectId: handle.result.objectId});
 }
 
-/* Regressions: fresh defaults reach the service before install, saves never overlap, failed saves roll
-   back, the dropdowns lock during an install, and saved choices files are validated before use. */
+/* Regressions: suggested defaults reach the service before install, unchanged answers are not re-saved,
+   old saved choices migrate, browser history works locally, and saved choices files are validated. */
 async function localRegressions() {
   await viewport(1280, 900, false);
   mock.routes = {};
@@ -446,80 +639,73 @@ async function localRegressions() {
   mock.requests = [];
   await open("/setup");
   await waitFor("document.getElementById('mode-badge').textContent === 'ON THIS COMPUTER'", "local badge regressions");
+  await walk({});
   await click('[data-action="install"]');
   await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "fresh install ready");
+  const suggested = full(Object.assign({}, catalog.defaults, catalog.roles.find((r) => r.id === catalog.defaults.role).suggest));
   equal(mock.requests.filter((r) => r.method === "POST").map((r) => [r.path, r.body]),
-    [["/api/quickstart/save", {choices: catalog.defaults}], ["/api/quickstart/install", {consent: true}]], "fresh defaults are saved before install");
+    [["/api/quickstart/save", {choices: suggested}], ["/api/quickstart/install", {consent: true}]], "default answers with purpose suggestions are saved before install");
   equal(await text("status"), "", "fresh install shows no error");
 
-  // Saves are serialized: a second change while one is pending is refused and the display follows the service.
-  mock.state = freshState({choices: catalog.defaults});
+  // Saved three-field choices from an older version open the plan with migrated answers.
+  mock.state = freshState({choices: {role: "creator", budget: 10, existing: "anthropic"}});
+  mock.requests = [];
   await open("/setup");
-  mock.requests = [];
-  mock.maxInflight = 0;
-  mock.saveDelay = 400;
-  await select("role", "developer");
-  check(await evaluate("['role','budget','existing'].every(id => document.getElementById(id).disabled)"), "dropdowns locked while a save is pending");
-  await select("budget", "25");
-  await select("existing", "openai");
-  await waitIdle("serialized save");
-  mock.saveDelay = 0;
-  equal(mock.maxInflight, 1, "saves never overlap");
-  equal(mock.requests.filter((r) => r.path === "/api/quickstart/save").map((r) => r.body.choices), [{role: "developer", budget: 0, existing: "none"}], "only the first change was sent");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["developer", "0", "none"], "display matches the saved choices");
-  equal(await text("plan-title"), lib.recommend(mock.state.choices, catalog).title, "plan matches the service choices");
-  for (const [id, value] of [["budget", "10"], ["existing", "anthropic"], ["role", "creator"]]) {
-    await select(id, value);
-    if (id === "budget") await sleep(650);
-    await waitIdle("sequential save " + id);
-  }
-  equal(mock.state.choices, {role: "creator", budget: 10, existing: "anthropic"}, "sequential changes all reach the service in order");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["creator", "10", "anthropic"], "display after sequential changes");
-
-  // Failed save rolls back to the service choices.
+  equal(await currentStep(), "plan", "saved choices open the plan");
+  await planMatches(full({role: "creator", budget: 10, existing: "anthropic"}), "migrated service choices");
+  // Changing nothing does not re-save; browser Back and Forward stay on this page.
+  await click('[data-action="change"]');
+  await waitFor("location.hash === '#role'", "change answers locally");
+  await walk({});
+  equal(mock.requests.filter((r) => r.method === "POST").length, 0, "unchanged answers are not saved again");
+  await send("Runtime.evaluate", {expression: "history.back()"});
+  await waitFor("location.hash === '#automation'", "local browser Back");
+  await select("automation", "calendar_email");
   route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
-  await select("existing", "ollama");
-  await waitIdle("failed save");
-  equal(await text("status"), MESSAGES.save, "failed save message");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["creator", "10", "anthropic"], "failed save restores the service choices");
-  equal(await text("plan-title"), lib.recommend(mock.state.choices, catalog).title, "failed save restores the plan");
-  // A failed pre-install save blocks the install.
-  mock.requests = [];
-  await click('[data-action="install"]');
-  await waitIdle("blocked install");
-  equal(mock.requests.filter((r) => r.path === "/api/quickstart/install").length, 0, "no install when the save before it fails");
+  await send("Runtime.evaluate", {expression: "history.forward()"});
+  await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.save)}`, "Forward with a failed save");
+  equal([await currentStep(), await evaluate("location.hash")], ["automation", "#automation"], "Forward with a failed save stays on the question");
   delete mock.routes["POST /api/quickstart/save"];
+  await nextStep("plan");
+  equal(mock.state.choices.automation, "calendar_email", "changed answer saved after recovery");
 
-  // While installing, the dropdowns stay locked and nothing is saved.
+  // While installing, a changed answer is not saved.
   mock.installOutcome = "running";
-  mock.requests = [];
   await click('[data-action="install"]');
   await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installRunning)}`, "install running regression");
-  check(await evaluate("['role','budget','existing'].every(id => document.getElementById(id).disabled) && document.getElementById('launch').disabled"), "dropdowns and launch locked during install");
+  check(await evaluate("document.getElementById('change').disabled"), "Change answers locked during install");
   const saves = mock.requests.filter((r) => r.path === "/api/quickstart/save").length;
-  await select("role", "office");
-  await sleep(200);
+  await send("Runtime.evaluate", {expression: "history.back()"});
+  await waitFor("location.hash === '#automation'", "Back during install");
+  await select("automation", "none");
+  await click("#next");
+  await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.saveBusy)}`, "busy message");
   equal(mock.requests.filter((r) => r.path === "/api/quickstart/save").length, saves, "no save sent during install");
-  equal(await evaluate("role.value"), "creator", "display unchanged during install");
   mock.state.install = {state: "ready", message: LEAK};
-  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "install finished regression");
-  await waitIdle("unlocked after install");
   mock.installOutcome = "ready";
+  await waitFor("true");
+  await sleep(1700);
+  await nextStep("plan");
+  equal(mock.state.choices.automation, "none", "save goes through once the install finished");
 
-  // Load saved choices: bad files rejected with a fixed message, a valid file saved through the service.
+  // Load saved choices: bad files rejected with a fixed message, valid files saved through the service.
   check(await evaluate("document.querySelector('[data-action=\"import-choices\"]').offsetParent !== null && document.getElementById('import-choices').hidden"), "load button shown, file input hidden");
   const pii = "alice.private@example.com";
-  const valid = {schema: lib.CHOICES_SCHEMA, choices: {role: "study", budget: 25, existing: "nvidia"}};
+  const valid = {schema: lib.CHOICES_SCHEMA, choices: {role: "study", budget: 2500, existing: "nvidia", dictation: "wispr", reply: "read_aloud", automation: "agent_later"}};
   const bad = {
     "too-large.json": JSON.stringify(Object.assign({}, valid, {pad: "x".repeat(3000)})),
     "duplicate.json": '{"schema":"' + lib.CHOICES_SCHEMA + '","choices":{"role":"study","role":"office","budget":0,"existing":"none"}}',
     "unknown-field.json": JSON.stringify(Object.assign({}, valid, {email: pii})),
     "extra-choice.json": JSON.stringify({schema: lib.CHOICES_SCHEMA, choices: Object.assign({}, valid.choices, {key: pii})}),
+    "proto.json": '{"schema":"' + lib.CHOICES_SCHEMA + '","choices":{"__proto__":{"x":1},"role":"study","budget":0,"existing":"none"}}',
     "wrong-schema.json": JSON.stringify({schema: "jarvis-setup-answers/1", choices: valid.choices}),
     "bad-value.json": JSON.stringify({schema: lib.CHOICES_SCHEMA, choices: {role: pii, budget: 0, existing: "none"}}),
+    "bad-reply.json": JSON.stringify({schema: lib.CHOICES_SCHEMA, choices: Object.assign({}, valid.choices, {reply: "elevenlabs"})}),
+    "budget-too-high.json": JSON.stringify({schema: lib.CHOICES_SCHEMA, choices: Object.assign({}, valid.choices, {budget: 10001})}),
     "deep.json": "[".repeat(40) + "]".repeat(40),
     "not-json.txt": "role=study " + pii,
   };
+  const shown = await stackRows();
   for (const [name, content] of Object.entries(bad)) {
     mock.requests = [];
     await evaluate("document.getElementById('status').textContent = ''");
@@ -528,68 +714,52 @@ async function localRegressions() {
     await waitIdle("import " + name);
     equal(mock.requests.filter((r) => r.method === "POST").length, 0, "no request for " + name);
     check(!(await evaluate("document.body.innerHTML.includes(" + JSON.stringify(pii) + ")")), "file content not echoed for " + name);
-    equal(await evaluate("[role.value, budget.value, existing.value]"), ["creator", "10", "anthropic"], "choices unchanged by " + name);
+    equal(await stackRows(), shown, "plan unchanged by " + name);
   }
   mock.requests = [];
   await setImportFile("valid.json", JSON.stringify(valid, null, 2));
   await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.imported)}`, "valid import");
   await waitIdle("valid import");
   equal(mock.requests.filter((r) => r.method === "POST").map((r) => [r.path, r.body]), [["/api/quickstart/save", {choices: valid.choices}]], "valid file saved through the service only");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["study", "25", "nvidia"], "valid file restores the dropdowns");
+  await planMatches(valid.choices, "imported plan");
+  mock.requests = [];
+  const old = {schema: "jarvis-quickstart-choices/1", choices: {role: "developer", budget: 50, existing: "openai"}};
+  await setImportFile("old.json", JSON.stringify(old));
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.imported)}`, "old file import");
+  await waitIdle("old import");
+  equal(mock.requests.filter((r) => r.method === "POST").map((r) => r.body), [{choices: full(old.choices)}], "an older choices file is migrated before saving");
+  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
+  await setImportFile("valid-again.json", JSON.stringify(valid));
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.importSave)}`, "import save failure");
+  await waitIdle("import save failure");
+  await planMatches(full(old.choices), "plan kept after a failed import save");
   mock.routes = {};
 }
 
 const BUDGET = {month: "2026-10", limit_usd: 25, reserved_usd: 0.12, remaining_usd: 24.88, paid_requests: 12, reserve_per_request_usd: 0.01,
   kind: "local_allowance", provider_limit_required: true, pricing_checked: "2026-10-28", valid_until: "2026-11-27"};
 
-/* Slider saves are debounced and serialized, the allowance meter only shows service data, and AI calls refresh it. */
+/* The allowance meter only shows service data and sits in the collapsed cost details; AI calls refresh it. */
 async function localBudget() {
   await viewport(1280, 900, false);
   mock.routes = {};
-  mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, budget: Object.assign({}, BUDGET)});
+  mock.state = freshState({choices: full({role: "office", budget: 25, existing: "openai"}), credentials: {nvidia: false, openai: true, anthropic: false}, budget: Object.assign({}, BUDGET)});
   mock.requests = [];
   await open("/setup");
   await waitFor("document.getElementById('mode-badge').textContent === 'ON THIS COMPUTER'", "local badge budget");
+  check(!(await evaluate("document.getElementById('budget-meter').checkVisibility()")), "allowance meter tucked into the collapsed details");
+  await evaluate("document.querySelectorAll('#result details').forEach(d => { d.open = true; })");
   check(await visible("budget-meter"), "allowance meter shown in local mode");
   equal(await text("meter-text"), "$0.12 reserved of $25.00, $24.88 left, 12 paid attempts", "meter shows service figures");
   equal(await text("meter-month"), "2026-10", "meter shows the month");
   equal(await evaluate("[document.getElementById('meter-bar').max, document.getElementById('meter-bar').value]"), [25, 0.12], "meter bar follows the service");
   equal(await text("meter-note"), MESSAGES.meterNote + " Pricing assumptions checked 2026-10-28, due for review 2026-11-27; update Jarvis after that date.", "meter explains the local allowance and its review date");
   equal(await evaluate("document.getElementById('limit-link').href"), catalog.providers.openai.limit_url, "OpenAI hard limit link");
-  await shot("local-budget");
-
-  // Several slider movements produce one save with the final value.
-  mock.requests = [];
-  for (const value of [26, 28, 31, 40]) {
-    await evaluate(`(() => { const b = document.getElementById('budget'); b.value = '${value}'; b.dispatchEvent(new Event('input', {bubbles: true})); })()`);
-    await sleep(60);
-  }
-  equal(await text("budget-value"), "$40", "output follows the slider before saving");
-  await sleep(650);
-  await waitIdle("slider save");
-  equal(mock.requests.filter((r) => r.path === "/api/quickstart/save").map((r) => r.body.choices.budget), [40], "slider saves once with the final value");
-  equal(mock.state.choices.budget, 40, "service holds the slider value");
-
-  // Keyboard on the slider keeps focus across the save.
-  await evaluate("document.getElementById('budget').focus()");
-  await key("ArrowLeft");
-  await sleep(650);
-  await waitIdle("keyboard save");
-  equal(mock.state.choices.budget, 39, "keyboard change saved");
-  equal(await evaluate("document.activeElement && document.activeElement.id"), "budget", "slider keeps focus after its save");
-
-  // Failed slider save rolls back.
-  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
-  await select("budget", "5");
-  await sleep(650);
-  await waitIdle("slider failure");
-  equal(await text("status"), MESSAGES.save, "slider save failure message");
-  equal(await evaluate("[budget.value, document.getElementById('budget-value').textContent]"), ["39", "$39"], "slider rolls back to the saved value");
-  delete mock.routes["POST /api/quickstart/save"];
+  equal(await text("budget-line"), "Monthly budget for paid AI: $25 a month.", "budget line");
+  check(!(await visible("budget-paused")), "no paused warning when the allowance is available");
+  await shot("30-local-costs-open");
 
   // Test and chat refresh the allowance even when they fail.
-  await evaluate("document.getElementById('ai-box').hidden = false; document.getElementById('ai-box').open = true");
-  mock.state.credentials.openai = true;
   await click("#consent");
   route("POST /api/quickstart/test", (req, res) => { mock.state.budget.reserved_usd = 0.13; mock.state.budget.remaining_usd = 24.87; mock.state.budget.paid_requests = 13; json(res, 502, {error: LEAK}); });
   const gets = mock.requests.filter((r) => r.method === "GET" && r.path === "/api/quickstart").length;
@@ -601,45 +771,39 @@ async function localBudget() {
   route("POST /api/quickstart/chat", (req, res) => { mock.state.budget.reserved_usd = 0.14; mock.state.budget.remaining_usd = 24.86; mock.state.budget.paid_requests = 14; json(res, 200, {reply: "ok"}); });
   await click('[data-action="chat"]');
   await waitFor(`document.getElementById('meter-text').textContent.startsWith('$0.14')`, "meter refresh after chat");
+  check(!(await visible("speak-row")), "no read-aloud option when text replies were chosen");
+  equal(await evaluate("window.__speech.spoken.length"), 0, "nothing spoken for text replies");
 
-  // Slider is locked during install.
-  mock.installOutcome = "running";
-  await click('[data-action="install"]');
-  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installRunning)}`, "install running budget");
-  check(await evaluate("document.getElementById('budget').disabled"), "slider locked during install");
-  const saves = mock.requests.filter((r) => r.path === "/api/quickstart/save").length;
-  await select("budget", "70");
-  await sleep(650);
-  equal(mock.requests.filter((r) => r.path === "/api/quickstart/save").length, saves, "no slider save during install");
-  mock.state.install = {state: "ready", message: LEAK};
-  mock.installOutcome = "ready";
-  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "install ready budget");
-
-  // Free providers and $0 explain what the allowance does not cover; malformed budget data hides the meter.
+  // Large budgets show the large-budget note; free providers and $0 explain what the allowance does not cover.
   mock.routes = {};
-  mock.state = freshState({choices: {role: "office", budget: 0, existing: "ollama"}, budget: Object.assign({}, BUDGET, {limit_usd: 0, remaining_usd: 0, reserved_usd: 0, paid_requests: 0})});
+  mock.state = freshState({choices: full({role: "office", budget: 5000, existing: "anthropic"}), budget: Object.assign({}, BUDGET, {limit_usd: 5000, remaining_usd: 4999.88})});
+  await open("/setup");
+  equal(await text("budget-line"), "Monthly budget for paid AI: $5,000 a month.", "large budget shown with separators");
+  check((await evaluate("[...document.querySelectorAll('#plan-tradeoffs li')].map(n => n.textContent)")).includes(catalog.notes.large_budget), "large budget note shown");
+  mock.state = freshState({choices: full({role: "office", budget: 0, existing: "ollama"}), budget: Object.assign({}, BUDGET, {limit_usd: 0, remaining_usd: 0, reserved_usd: 0, paid_requests: 0})});
   await open("/setup");
   equal(await text("meter-note"), MESSAGES.meterNote + " " + MESSAGES.meterFree + " Pricing assumptions checked 2026-10-28, due for review 2026-11-27; update Jarvis after that date.", "Ollama does not use the allowance");
-  check(!(await visible("limit-help")), "no hard limit link for Ollama");
-  mock.state = freshState({choices: {role: "office", budget: 0, existing: "openai"}, budget: Object.assign({}, BUDGET, {limit_usd: 0, remaining_usd: 0, reserved_usd: 0, paid_requests: 0})});
+  check(await evaluate("document.getElementById('limit-help').hidden"), "no hard limit link for Ollama");
+  mock.state = freshState({choices: full({role: "office", budget: 0, existing: "openai"}), budget: Object.assign({}, BUDGET, {limit_usd: 0, remaining_usd: 0, reserved_usd: 0, paid_requests: 0})});
   await open("/setup");
   equal(await text("plan-title"), plan({role: "office", budget: 0, existing: "openai"}).title, "$0 with OpenAI recommends trial access");
 
-  // Unavailable allowance data: fixed paused text, no figures, no service message.
+  // Unavailable allowance data: fixed paused text shown outside the details, no figures, no service message.
   const CANARY = "PRIVATE-LEDGER-" + "c:\\Users\\someone\\budget.json";
-  mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, credentials: {nvidia: false, openai: true, anthropic: false},
+  mock.state = freshState({choices: full({role: "office", budget: 25, existing: "openai"}), credentials: {nvidia: false, openai: true, anthropic: false},
     budget: {available: false, kind: "local_allowance", limit_usd: 25, message: CANARY}});
   await open("/setup");
-  check(await visible("budget-meter"), "unavailable allowance still shows the meter box");
+  check(await visible("budget-paused"), "paused warning visible without opening details");
+  equal(await text("budget-paused"), MESSAGES.budgetUnavailable, "paused warning uses the fixed text");
+  await evaluate("document.querySelectorAll('#result details').forEach(d => { d.open = true; })");
   equal(await text("meter-text"), MESSAGES.budgetUnavailable, "unavailable allowance shows the fixed paused text");
   equal(await text("meter-note"), MESSAGES.budgetUnavailableNote, "unavailable allowance explains what still works");
   check(!(await visible("meter-bar")) && !(await visible("meter-month")), "unavailable allowance hides the bar and month");
   check(!(await evaluate("document.body.innerHTML.includes('PRIVATE-LEDGER')")), "service budget message never displayed");
   check(await visible("ai-box") && !(await evaluate("document.getElementById('consent').disabled")), "chat stays available while paid AI is paused");
-  await shot("local-budget-paused");
+  await shot("31-local-budget-paused");
 
   // Known budget error code: fixed paused message. Other codes and statuses keep the usual fixed text.
-  await evaluate("document.getElementById('ai-box').open = true");
   await click("#consent");
   await evaluate("document.getElementById('prompt').value = 'Hi'");
   const cases = [
@@ -659,32 +823,32 @@ async function localBudget() {
   }
   mock.routes = {};
   for (const broken of [{kind: "invoice"}, Object.assign({}, BUDGET, {reserved_usd: -1}), Object.assign({}, BUDGET, {month: "2026-13"}), Object.assign({}, BUDGET, {paid_requests: 1.5}), "25"]) {
-    mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, budget: broken});
+    mock.state = freshState({choices: full({role: "office", budget: 25, existing: "openai"}), budget: broken});
     await open("/setup");
-    check(!(await visible("budget-meter")), "malformed allowance hidden " + JSON.stringify(broken).slice(0, 40));
+    await evaluate("document.querySelectorAll('#result details').forEach(d => { d.open = true; })");
+    check(!(await visible("budget-meter")) && !(await visible("budget-paused")), "malformed allowance hidden " + JSON.stringify(broken).slice(0, 40));
   }
   await viewport(390, 844, true);
-  mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, budget: Object.assign({}, BUDGET)});
+  mock.state = freshState({choices: full({role: "office", budget: 25, existing: "openai"}), budget: Object.assign({}, BUDGET)});
   await open("/setup");
-  await noOverflow("local budget mobile");
-  await shot("local-budget-mobile");
+  await noOverflow("local plan mobile");
+  await shot("32-local-plan-mobile");
   await viewport(1280, 900, false);
   mock.routes = {};
 }
 
 async function localVariants() {
-  // Saved choices from the service restore, local provider hides the key field.
+  // Saved choices from the service restore; a local provider hides the key field.
   mock.routes = {};
-  mock.state = freshState({choices: {role: "creator", budget: 10, existing: "ollama"}});
+  mock.state = freshState({choices: full({role: "creator", budget: 10, existing: "ollama"})});
   await viewport(390, 844, true);
   await open("/setup");
   await waitFor("document.getElementById('mode-badge').textContent === 'ON THIS COMPUTER'", "local badge mobile");
-  equal(await evaluate("[role.value, budget.value, existing.value]"), ["creator", "10", "ollama"], "saved choices restore");
+  await planMatches(full({role: "creator", budget: 10, existing: "ollama"}), "restored local plan");
   check(!(await visible("key-box")), "no key field for Ollama");
   check(await visible("ai-box"), "AI chat offered for Ollama");
   check(!(await visible("phone")), "local mode on a small screen is not the phone planner");
   await noOverflow("local mobile");
-  await shot("local-mobile");
   await viewport(1280, 900, false);
 
   // Session failure.
@@ -695,15 +859,15 @@ async function localVariants() {
   check(!(await visible("local")), "no local controls without a session");
   equal(mock.requests.map((r) => r.path), ["/api/session"], "nothing else called after session failure");
 
-  // Service answering without local:true.
+  // Service answering without local:true: the page stays a planner and never posts.
   mock.routes = {"GET /api/quickstart": (req, res) => json(res, 200, Object.assign(freshState(), {local: false}))};
   mock.requests = [];
   await open("/setup");
   equal(await text("notice"), MESSAGES.local, "non-local state notice");
+  await walk({role: "study"});
   check(!(await visible("local")), "no local controls when the service is not local");
-  await select("role", "study");
-  await sleep(100);
   equal(mock.requests.filter((r) => r.method === "POST").length, 0, "no POST when local mode is not confirmed");
+  equal(await evaluate("document.querySelectorAll('#key-input').length"), 0, "no key field when local mode is not confirmed");
   mock.routes = {};
 }
 
@@ -720,11 +884,9 @@ async function websitePages() {
   await click('[data-pad="open"]');
   check((await text("pad-status")).startsWith("Hand found"), "practice pad still works");
   await noOverflow("site desktop");
-  await shot("site-desktop");
   await viewport(390, 844, true);
   await navigate(origin + "/site/index.html");
   await noOverflow("site mobile");
-  await shot("site-mobile");
 }
 
 async function main() {
@@ -765,7 +927,7 @@ async function main() {
       if (msg.id && pending.has(msg.id)) { const p = pending.get(msg.id); pending.delete(msg.id); msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result); return; }
       if (msg.method === "Fetch.requestPaused") {
         const url = msg.params.request.url;
-        const ok = url.startsWith("data:") || [...allowedOrigins].some((item) => url === item || url.startsWith(item + "/"));
+        const ok = url.startsWith("data:") || url.startsWith("blob:") || [...allowedOrigins].some((item) => url === item || url.startsWith(item + "/"));
         if (!ok) external.push(url);
         const reply = ok ? {method: "Fetch.continueRequest", params: {requestId: msg.params.requestId}} : {method: "Fetch.failRequest", params: {requestId: msg.params.requestId, errorReason: "BlockedByClient"}};
         ws.send(JSON.stringify({id: ++nextId, method: reply.method, params: reply.params, sessionId: msg.sessionId}));
@@ -778,6 +940,7 @@ async function main() {
     session = (await send("Target.attachToTarget", {targetId: target.targetId, flatten: true})).sessionId;
     await send("Page.enable");
     await send("Runtime.enable");
+    await send("Page.addScriptToEvaluateOnNewDocument", {source: SPEECH_FAKE});
     await send("Fetch.enable", {patterns: [{urlPattern: "*"}]});
     await send("Browser.setPermission", {permission: {name: "clipboard-write"}, setting: "denied"}).catch(() => {});
     await hostedDesktop();

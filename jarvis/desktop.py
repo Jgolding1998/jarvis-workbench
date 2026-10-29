@@ -31,7 +31,7 @@ def main(argv=None):
         print("Desktop prerequisites are ready. No devices were opened.")
         return 0
     from . import server
-    flags = ["--port", "0"] + (["--camera", "--allow-lock"] if args.feature == "camera" else ["--allow-hand-control"])
+    flags = ["--port", "0"] + (["--camera", "--allow-lock", "--allow-spreadsheet"] if args.feature == "camera" else ["--allow-hand-control"])
     options = server.build_parser().parse_args(flags)
     server.check_args(parser, options)
     server.serve(options)

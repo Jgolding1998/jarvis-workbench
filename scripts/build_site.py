@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-PAGES = ("index.html", "site.css", "site.js", "privacy.html", "dashboard-preview.png", "favicon.svg", "_headers")
+PAGES = ("index.html", "practice.html", "site.css", "site.js", "privacy.html", "dashboard-preview.png", "favicon.svg", "_headers")
 SETUP = ("setup.html", "setup.js", "setup.css", "quickstart-catalog.json")
 
 
@@ -24,7 +24,10 @@ def build(destination: Path):
             raise ValueError("Output contains unexpected files; choose an empty output directory")
     destination.mkdir(parents=True, exist_ok=True)
     for name in PAGES:
-        shutil.copyfile(ROOT / "website" / name, destination / name)
+        if name == "index.html":
+            continue
+        source_name = "index.html" if name == "practice.html" else name
+        shutil.copyfile(ROOT / "website" / source_name, destination / name)
     for name in SETUP:
         source = ROOT / "web" / name
         if name == "setup.html":
@@ -33,9 +36,11 @@ def build(destination: Path):
             if content.count(marker) != 1:
                 raise ValueError("The local setup mode marker is missing or ambiguous")
             content = content.replace(marker, 'name="jarvis-mode" content="hosted"')
+            content = content.replace('<a id="privacy-link"', '<a href="practice.html">Hand controls</a>\n    <a id="privacy-link"')
             if 'type="password"' in content:
                 raise ValueError("The hosted setup page must not contain a key field")
             destination.joinpath(name).write_text(content, encoding="utf-8")
+            destination.joinpath("index.html").write_text(content, encoding="utf-8")
         elif name == "quickstart-catalog.json":
             text = source.read_text(encoding="utf-8")
             if json.loads(text).get("schema") != "jarvis-quickstart-catalog/1":

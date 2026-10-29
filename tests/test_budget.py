@@ -146,7 +146,7 @@ class BudgetTests(unittest.TestCase):
 
     def test_limits_provider_and_clock_errors_have_a_fixed_message(self):
         messages = []
-        for limit in (True,-1,101,0.5,"1",None,float("nan")):
+        for limit in (True,-1,10001,0.5,"1",None,float("nan")):
             with self.assertRaises(budget.BudgetError) as failure:
                 self.ledger.snapshot(limit)
             messages.append(str(failure.exception))
@@ -160,6 +160,29 @@ class BudgetTests(unittest.TestCase):
             messages.append(str(failure.exception))
         self.assertEqual(len(set(messages)),1)
         self.assertNotIn("canary",json.dumps(messages))
+
+    def test_extended_limit_matches_setup_and_reserves_final_cent(self):
+        from jarvis.quickstart import BUDGET_MAX
+        self.assertEqual(budget.MAX_LIMIT_USD, BUDGET_MAX)
+        self.assertEqual(self.ledger.snapshot(10000)["remaining_usd"],10000)
+        self.ledger.reserve("openai",10000)
+        with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
+            db.execute("UPDATE allowance SET reserved_micro_usd=?,paid_requests=?",
+                       (9_999_990_000,999_999))
+        state = self.ledger.reserve("openai",10000)
+        self.assertEqual((state["reserved_usd"],state["remaining_usd"],state["paid_requests"]),
+                         (10000,0,1_000_000))
+        with self.assertRaises(budget.BudgetError):
+            self.ledger.reserve("openai",10000)
+        self.assertEqual(self.ledger.snapshot(100)["remaining_usd"],0)
+
+    def test_extended_limit_still_rejects_out_of_range_persisted_counters(self):
+        self.ledger.reserve("openai",10000)
+        with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
+            db.execute("UPDATE allowance SET reserved_micro_usd=?,paid_requests=?",
+                       (10_000_010_000,1_000_001))
+        with self.assertRaises(budget.BudgetError):
+            self.ledger.snapshot(10000)
 
     def test_thread_reservations_cannot_exceed_the_allowance(self):
         self.ledger.reserve("openai",1)

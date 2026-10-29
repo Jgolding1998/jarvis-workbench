@@ -2,11 +2,12 @@ import http.client
 import json
 import socket
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
 from jarvis.actions import Actions
-from jarvis.server import LocalHTTPServer, Service, make_handler
+from jarvis.server import LocalHTTPServer, Service, SetupContext, make_handler
 
 
 class ServerTests(unittest.TestCase):
@@ -170,3 +171,107 @@ class ServerTests(unittest.TestCase):
             service._run(["lock_absence"])
         self.assertIn("may still be unlocked", service.snapshot()["action_error"])
         self.assertIn("Action failed", service.snapshot()["events"][0]["message"])
+
+
+def drip(address, opening, drip_line, interval=0.1):
+    """Send a request opening, then one more line per interval. Returns seconds until the server closes and what it sent."""
+    connection = socket.create_connection(address, timeout=5)
+    stopped, received = threading.Event(), []
+
+    def send():
+        try:
+            connection.sendall(opening)
+            while not stopped.wait(interval):
+                connection.sendall(drip_line)
+        except OSError:
+            pass
+
+    started = time.monotonic()
+    threading.Thread(target=send, daemon=True).start()
+    try:
+        while time.monotonic() - started < 15:
+            chunk = connection.recv(4096)
+            if not chunk:
+                break
+            received.append(chunk)
+    except OSError:
+        pass
+    finally:
+        elapsed = time.monotonic() - started
+        stopped.set()
+        connection.close()
+    return elapsed, b"".join(received)
+
+
+class SlowOnboarding:
+    def snapshot(self):
+        return {}
+
+    def chat(self, provider, prompt, consent):
+        time.sleep(0.6)
+        return {"reply": "synthetic reply after a slow provider"}
+
+
+class ProtocolLimitTests(unittest.TestCase):
+    def start(self, setup=None):
+        server = LocalHTTPServer(("127.0.0.1", 0), make_handler(Service(), "test-session-only", setup))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        def stop():
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        self.addCleanup(stop)
+        return server, ("127.0.0.1:" + str(server.server_address[1])).encode()
+
+    def test_header_deadline_is_absolute_for_a_slow_drip_client(self):
+        server, host = self.start()
+        with patch("jarvis.server.HEADER_SECONDS", 0.3):
+            elapsed, response = drip(server.server_address, b"GET /api/status HTTP/1.1\r\nHost: " + host + b"\r\n", b"X-Drip: a\r\n")
+        self.assertLess(elapsed, 3)
+        self.assertNotIn(b"200 OK", response)
+
+    def test_slow_body_is_dropped_before_any_action(self):
+        server, host = self.start()
+        opening = (b"POST /api/command HTTP/1.1\r\nHost: " + host + b"\r\nX-Jarvis-Token: test-session-only\r\n"
+                   b"Content-Type: application/json\r\nContent-Length: 2000\r\n\r\n")
+        with patch("jarvis.server.BODY_SECONDS", 0.3):
+            elapsed, response = drip(server.server_address, opening, b" ")
+        self.assertLess(elapsed, 3)
+        self.assertEqual(response, b"")
+
+    def test_header_timer_stops_before_a_slow_provider_reply(self):
+        server, host = self.start(SetupContext(onboarding=SlowOnboarding()))
+        body = json.dumps({"provider": "ollama", "prompt": "hello", "consent": True})
+        with patch("jarvis.server.HEADER_SECONDS", 0.1), patch("jarvis.server.BODY_SECONDS", 0.1):
+            connection = http.client.HTTPConnection(host.decode(), timeout=5)
+            connection.request("POST", "/api/quickstart/chat", body, {"Content-Type": "application/json", "X-Jarvis-Token": "test-session-only"})
+            response = connection.getresponse()
+            self.assertEqual((response.status, json.loads(response.read())), (200, {"reply": "synthetic reply after a slow provider"}))
+            connection.close()
+
+    def test_connection_admission_limit_sends_a_controlled_busy_reply(self):
+        with patch("jarvis.server.MAX_CONNECTIONS", 2):
+            server, host = self.start()
+        idle = [socket.create_connection(server.server_address, timeout=3) for _ in range(2)]
+        time.sleep(0.2)
+        with socket.create_connection(server.server_address, timeout=3) as extra:
+            extra.sendall(b"GET /api/status HTTP/1.1\r\nHost: " + host + b"\r\n\r\n")
+            response = http.client.HTTPResponse(extra)
+            response.begin()
+            self.assertEqual(response.status, 503)
+            self.assertEqual(json.loads(response.read()), {"error": "Server busy"})
+            self.assertEqual(response.getheader("Cache-Control"), "no-store")
+            self.assertIn("frame-ancestors 'none'", response.getheader("Content-Security-Policy"))
+        for connection in idle:
+            connection.close()
+        deadline = time.monotonic() + 5
+        while True:
+            connection = http.client.HTTPConnection(host.decode(), timeout=3)
+            connection.request("GET", "/api/status")
+            status = connection.getresponse().status
+            connection.close()
+            if status == 200 or time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
+        self.assertEqual(status, 200)

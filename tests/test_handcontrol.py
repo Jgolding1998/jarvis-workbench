@@ -372,21 +372,26 @@ class LaunchTests(unittest.TestCase):
 
 
 class VoiceTests(unittest.TestCase):
-    def recognize(self, service, text):
+    def recognize(self, service, text, stop_during_recognition=False):
         captured, stop = {}, threading.Event()
         class Recognizer:
             def __init__(self, model, rate, grammar):
                 captured["grammar"] = json.loads(grammar)
             def AcceptWaveform(self, block):
+                if block == b"end":
+                    stop.set()
+                    return False
                 return True
             def Result(self):
-                stop.set()
+                if stop_during_recognition:
+                    stop.set()
                 return json.dumps({"text": text})
         class Stream:
             def __init__(self, callback, **kwargs):
                 self.callback = callback
             def __enter__(self):
                 self.callback(b"\0" * 8, 4, None, None)
+                self.callback(b"end", 1, None, None)
                 return self
             def __exit__(self, *args):
                 pass
@@ -405,3 +410,70 @@ class VoiceTests(unittest.TestCase):
         self.recognize(enabled, "watch me")
         self.assertEqual(enabled.hand.mode, "watching")
         enabled.shutdown()
+
+    def test_command_recognized_after_stop_is_discarded(self):
+        for text in ("active", "watch me"):
+            with self.subTest(text=text):
+                service = live_service()
+                service.hand_arm(True, False)
+                self.recognize(service, text, stop_during_recognition=True)
+                self.assertFalse(service.presence.active)
+                self.assertEqual(service.hand.mode, "off")
+                self.assertIsNone(service.camera.owner)
+                self.assertFalse(any(event["message"].startswith("Command") for event in service.events))
+
+    def test_lost_microphone_reopens_without_reloading_the_model(self):
+        for failure in ("silent", "error"):
+            with self.subTest(failure=failure):
+                service, stop, loads, opens, statuses = live_service(), threading.Event(), [], [], []
+                service.voice_status = statuses.append
+                class Recognizer:
+                    def __init__(self, model, rate, grammar):
+                        pass
+                    def AcceptWaveform(self, block):
+                        if block == b"end":
+                            stop.set()
+                            return False
+                        return True
+                    def Result(self):
+                        return json.dumps({"text": "active"})
+                class Stream:
+                    def __init__(self, callback, **kwargs):
+                        self.callback = callback
+                        opens.append(kwargs)
+                    def __enter__(self):
+                        if len(opens) == 1:
+                            if failure == "error":
+                                raise OSError("synthetic device loss")
+                            return self
+                        self.callback(b"\0" * 3200, 1600, None, None)
+                        self.callback(b"end", 1, None, None)
+                        return self
+                    def __exit__(self, *args):
+                        pass
+                vosk = types.SimpleNamespace(SetLogLevel=lambda level: None, Model=lambda path: loads.append(path), KaldiRecognizer=Recognizer)
+                with patch.dict(sys.modules, {"vosk": vosk, "sounddevice": types.SimpleNamespace(RawInputStream=Stream)}), patch("jarvis.devices.STALL_SECONDS", 0.05):
+                    run_voice(service, stop, "synthetic-model", retry_seconds=0.01)
+                self.assertEqual(len(loads), 1)
+                self.assertEqual(len(opens), 2)
+                self.assertEqual(opens[0]["blocksize"] / opens[0]["samplerate"], 0.1)
+                self.assertIn("Microphone stopped; retrying. Typed commands still work", statuses)
+                self.assertEqual(statuses[-1], "Listening locally")
+                self.assertTrue(service.presence.active)
+                service.shutdown()
+
+    def test_voice_stop_interrupts_microphone_retry(self):
+        service, stop = live_service(), threading.Event()
+        class Stream:
+            def __init__(self, callback, **kwargs):
+                pass
+            def __enter__(self):
+                threading.Timer(0.05, stop.set).start()
+                raise OSError("synthetic missing microphone")
+            def __exit__(self, *args):
+                pass
+        vosk = types.SimpleNamespace(SetLogLevel=lambda level: None, Model=lambda path: object(), KaldiRecognizer=lambda *args: object())
+        started = time.monotonic()
+        with patch.dict(sys.modules, {"vosk": vosk, "sounddevice": types.SimpleNamespace(RawInputStream=Stream)}):
+            run_voice(service, stop, "synthetic-model", retry_seconds=30)
+        self.assertLess(time.monotonic() - started, 2)

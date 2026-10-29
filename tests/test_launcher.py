@@ -12,6 +12,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
+from types import SimpleNamespace
 
 from jarvis import launcher, planner
 
@@ -19,6 +20,18 @@ CMD = planner.ROOT / "Start-Jarvis.cmd"
 
 
 class LauncherTests(unittest.TestCase):
+    def test_camera_dashboard_offers_both_optional_actions_without_arming(self):
+        from jarvis import desktop
+        from jarvis.server import Service
+        with patch.dict(sys.modules, {"cv2": SimpleNamespace()}), patch("jarvis.desktop.sys.platform", "win32"), \
+                patch("jarvis.server.check_args"), patch("jarvis.server.serve") as serve, \
+                patch("jarvis.actions.Actions.run", side_effect=AssertionError("No desktop action")):
+            self.assertEqual(desktop.main(["--feature", "camera"]), 0)
+            args = serve.call_args.args[0]
+            self.assertTrue(args.camera and args.allow_lock and args.allow_spreadsheet)
+            service = Service()
+            self.assertFalse(service.presence.active or service.presence.lock_armed or service.presence.sheet_armed)
+
     def test_version_gate(self):
         self.assertFalse(launcher.python_ok((3, 10, 9)))
         self.assertTrue(launcher.python_ok((3, 11, 0)))

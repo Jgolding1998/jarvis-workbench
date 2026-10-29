@@ -1,6 +1,6 @@
 # Jarvis Workbench
 
-A local workstation assistant with hand gestures, a presence guard, and optional AI chat. Setup recommends a starting point from three choices: what you do, your monthly budget, and the tools you already have.
+A local workstation assistant with hand gestures, a presence guard, and optional AI chat. Setup asks one question at a time about your purpose, budget and tools, then gives you one starting configuration.
 
 [Guided setup and gesture practice](https://jarvis-workbench.jrgoldin.chatgpt.site) / [Releases and downloads](https://github.com/Jgolding1998/jarvis-workbench/releases/latest) / [Install with your AI agent](docs/INSTALL_WITH_AGENT.md)
 
@@ -10,7 +10,7 @@ A local workstation assistant with hand gestures, a presence guard, and optional
 
 **Windows x64:** download **Jarvis-Windows.zip** and its checksum from the same release, verify SHA-256, and extract the folder. Double-click **Start-Jarvis-Windows.cmd**. Python, the device packages, and the hand model are included. No administrator account is needed.
 
-Choose your role and existing tool from the dropdowns, then set your monthly AI allowance with the slider. Review the recommendation and choose **Install selected tools**. In the portable edition this checks the included dependencies. The source edition installs them into the project's `.venv`. **Open dashboard** starts the selected Windows feature idle, with real actions disarmed.
+Choose your purpose, monthly AI allowance, existing AI, typing or voice tools, reply preference and optional future automation. Use **Next** between questions. Review the recommendation and choose **Install selected tools**. In the portable edition this checks the included dependencies. The source edition installs them into the project's `.venv`. **Open dashboard** starts the selected Windows feature idle, with real actions disarmed.
 
 AI chat is optional. If you choose a cloud provider, create your own API key on its official website and enter it in the local app. It is kept in Windows Credential Manager. The public website never asks for a key. Testing a connection sends one short request only after you confirm it and may use your provider credits.
 
@@ -50,9 +50,11 @@ For the voice model and live launch examples, follow the [setup guide](docs/BUIL
 | Hand control practice (virtual cursor, clap to stop) | Implemented | Python | $0 |
 | Local hand tracking with optional real cursor | Implemented, experimental | Windows, camera, hand packages and model | $0 |
 | AI text chat: NVIDIA, OpenAI, Anthropic, Ollama | Implemented, optional | Your own cloud API key or local Ollama model | Set by the provider or your hardware |
-| ElevenLabs or your computer's built-in voice tools | Guidance only, no connector | Your own account or system settings | Set by the provider |
+| Read AI replies aloud in local setup | Implemented, opt-in | A browser voice marked as on-device | $0 |
+| Windows voice typing or existing Wispr Flow | External dictation into text boxes | Your own system settings or installed tool | Set by the tool |
+| ElevenLabs, MCP, calendar and email integration | Not built in | Future integration | Not included |
 
-The recommendation is deterministic: the same choices give the same plan. AI replies are text only. They cannot run commands, inspect files, change permissions, or operate the desktop.
+The recommendation is deterministic: the same choices give the same plan. AI replies appear as text, with optional on-device read-aloud in local setup. They cannot run commands, inspect files, change permissions, or operate the desktop.
 
 ## Planning costs
 
@@ -60,7 +62,7 @@ The app has its own dashboard. It does not include the movie character's voice, 
 
 The local dashboard, presence guard, hand control, and offline voice have no subscription charge. At a $0 budget, setup suggests NVIDIA's no-cost evaluation access or an existing local Ollama installation. NVIDIA availability and limits depend on your account and the model; rate limits and busy periods can cause waiting. Local models use your hardware, memory, electricity, and disk space. Free does not always mean slower.
 
-The slider sets a local allowance of $0 to $100. Before each OpenAI or Anthropic attempt, this installation reserves $0.01 from that month's allowance and refuses attempts when it is used up. The reservation stays after an error because the provider may still have processed the request. This is a conservative allowance, not a report of your actual bill. It persists across restarts and is shared by setup and the desktop app. At $0, paid requests stop before reading a key or contacting the provider. NVIDIA trial access and local Ollama do not consume this paid allowance.
+The slider covers $0 to $1,000, with an exact amount up to $10,000. Before each OpenAI or Anthropic attempt, this installation reserves $0.01 from that month's allowance and refuses attempts when it is used up. The reservation stays after an error because the provider may still have processed the request. This is a conservative allowance, not a report of your actual bill. It persists across restarts and is shared by setup and the desktop app. At $0, paid requests stop before reading a key or contacting the provider. NVIDIA trial access and local Ollama do not consume this paid allowance.
 
 Set a provider spend limit too. Jarvis cannot control other apps, verify NVIDIA trial eligibility, or guarantee a provider's final invoice. The fixed-model pricing check expires after November 27, 2026; paid requests then pause until the app's reviewed pricing is updated. [OpenAI's hard-limit option](https://help.openai.com/en/articles/9186755-managing-projects-in-the-api-platform) can stop tracked spending, with a possible small enforcement delay. [Anthropic's spend limits](https://platform.claude.com/docs/en/api/rate-limits) provide a separate account control. Some chat subscriptions offer eligible API credits; check your account. Jarvis never purchases credits or creates keys.
 
@@ -89,6 +91,8 @@ The **Hand control** panel has a practice pad. Start practice, move inside the p
 
 Typed `watch me` or `watchme` starts the local MediaPipe hand camera; `stop mouse` stops it. Follow the [hand control guide](docs/HAND_CONTROL.md) to install the optional packages and verified model, then launch with `--allow-hand-control`. Real pointer movement stays off until you enable its separate dashboard permission and start a hand session. Voice `watch me` also needs offline voice and its own dashboard opt-in.
 
+Point with one raised open hand. Thumb to middle finger is a left click; thumb to ring finger is a right click. A second hand held clearly lower in the camera view is ignored, and it never takes over when the raised hand leaves. The tracker sees hands, not your body, so this is judged from the image; see the guide for the exact rule and framing limits.
+
 Clap, Esc, `stop mouse`, or **Stop hand control** stops hand control only. Hand stop never disarms presence permissions; an active presence guard keeps running during hand practice. The camera has one owner at a time: hand control and the presence guard cannot both use it, and starting one while the other runs gives a clear message instead of silently stopping either.
 
 ## Build your own
@@ -101,7 +105,7 @@ The [setup guide](docs/BUILD_YOUR_OWN.md) covers a fresh environment, local voic
 python -m unittest discover -s tests -v
 ```
 
-The suite covers the presence policy timing, invalid inputs, workbook contents, simulated action isolation, local session authorization, DNS rebinding, and cross-origin requests. It also covers the setup wizard: answer validation, prototype-key and unknown-field rejection, budget limits, deterministic plans, identical results from the Python and browser planners (when Node.js is installed), atomic config saving, the local HTTP routes, the launcher's end-to-end apply and exit, the missing-Python message, hand control permissions, camera ownership, clap and Esc stops, and fake cursor output. Tests use fake observations and fake Windows calls; they never open a camera or microphone, move the cursor, or lock the machine.
+The suite covers the presence policy timing, invalid inputs, workbook contents, simulated action isolation, local session authorization, DNS rebinding, and cross-origin requests. It also covers the setup wizard: answer validation, prototype-key and unknown-field rejection, budget limits, deterministic plans, identical results from the Python and browser planners (when Node.js is installed), atomic config saving, the local HTTP routes, the launcher's end-to-end apply and exit, the missing-Python message, hand control permissions, camera ownership, clap and Esc stops, fake cursor output, and microphone loss recovery with a fake audio stream. Tests use fake observations and fake Windows calls; they never open a camera or microphone, move the cursor, or lock the machine.
 
 Camera accuracy, microphone recognition, a physical Windows lock, opening Excel, and live hand tracking need manual checks on your own hardware. A successful Windows API result means the request started, not proof that it completed.
 

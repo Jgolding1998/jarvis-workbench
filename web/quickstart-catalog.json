@@ -3,7 +3,10 @@
   "defaults": {
     "role": "office",
     "budget": 0,
-    "existing": "none"
+    "existing": "none",
+    "dictation": "keyboard",
+    "reply": "none",
+    "automation": "none"
   },
   "release": {
     "windows_zip": "https://github.com/Jgolding1998/jarvis-workbench/releases/latest/download/Jarvis-Windows.zip",
@@ -17,49 +20,91 @@
     {
       "id": "developer",
       "label": "Coding and development",
+      "hint": "Adds hand control so you can point and click while your hands stay near the keyboard.",
       "features": [
         "hand"
       ],
       "title": "Developer desk",
-      "summary": "Point and click by hand while your keyboard stays busy, with an AI helper for quick questions."
+      "summary": "Point and click by hand while your keyboard stays busy, with an AI helper for quick questions.",
+      "suggest": {
+        "dictation": "keyboard",
+        "reply": "none",
+        "automation": "none"
+      }
     },
     {
       "id": "office",
       "label": "Office work and email",
+      "hint": "Adds a presence lock that asks Windows to lock when you step away.",
       "features": [
         "camera"
       ],
       "title": "Office desk",
-      "summary": "Ask Windows to lock when you step away, with an AI helper for drafts and summaries."
+      "summary": "Ask Windows to lock when you step away, with an AI helper for drafts and summaries.",
+      "suggest": {
+        "dictation": "windows",
+        "reply": "none",
+        "automation": "none"
+      }
     },
     {
       "id": "study",
       "label": "Study and research",
+      "hint": "Adds a presence lock that keeps your notes private when you step away.",
       "features": [
         "camera"
       ],
       "title": "Study desk",
-      "summary": "Keep your notes private when you step away, with an AI helper for explanations."
+      "summary": "Keep your notes private when you step away, with an AI helper for explanations.",
+      "suggest": {
+        "dictation": "keyboard",
+        "reply": "read_aloud",
+        "automation": "none"
+      }
     },
     {
       "id": "creator",
       "label": "Creative and media work",
+      "hint": "Adds hand control for steering the pointer between your tools.",
       "features": [
         "hand"
       ],
       "title": "Creator desk",
-      "summary": "Steer the pointer by hand between tools, with an AI helper for ideas and captions."
+      "summary": "Steer the pointer by hand between tools, with an AI helper for ideas and captions.",
+      "suggest": {
+        "dictation": "windows",
+        "reply": "none",
+        "automation": "none"
+      }
+    },
+    {
+      "id": "handsfree",
+      "label": "Less mouse and keyboard",
+      "hint": "Adds hand control and suggests voice typing, so you can do more without the mouse.",
+      "features": [
+        "hand"
+      ],
+      "title": "Hands-light desk",
+      "summary": "Move the pointer by hand and type by voice, with an AI helper for short answers.",
+      "suggest": {
+        "dictation": "windows",
+        "reply": "read_aloud",
+        "automation": "none"
+      }
     }
   ],
   "budget": {
     "min": 0,
-    "max": 100,
-    "step": 1
+    "max": 10000,
+    "step": 1,
+    "slider_max": 1000,
+    "large_from": 101
   },
   "existing": [
     {
       "id": "none",
       "label": "None yet",
+      "hint": "Fine for beginners. Jarvis suggests free NVIDIA trial access, or no AI at all.",
       "zero": "nvidia",
       "paid": "nvidia",
       "zero_notes": [
@@ -72,8 +117,26 @@
       ]
     },
     {
+      "id": "chat_only",
+      "label": "ChatGPT or Claude chat only",
+      "hint": "A chat subscription has no API key Jarvis can use, so Jarvis suggests free trial access.",
+      "zero": "nvidia",
+      "paid": "nvidia",
+      "zero_notes": [
+        "chat_subscription",
+        "nvidia_trial",
+        "ollama_option"
+      ],
+      "paid_notes": [
+        "chat_subscription",
+        "nvidia_trial",
+        "start_small"
+      ]
+    },
+    {
       "id": "nvidia",
       "label": "NVIDIA API key",
+      "hint": "A key from build.nvidia.com for trial access.",
       "zero": "nvidia",
       "paid": "nvidia",
       "zero_notes": [
@@ -88,6 +151,7 @@
     {
       "id": "openai",
       "label": "OpenAI API account",
+      "hint": "Means an OpenAI API account with billing, not a ChatGPT subscription.",
       "zero": "nvidia",
       "paid": "openai",
       "zero_notes": [
@@ -104,6 +168,7 @@
     {
       "id": "anthropic",
       "label": "Anthropic API account",
+      "hint": "Means an Anthropic API account with billing, not a Claude subscription.",
       "zero": "nvidia",
       "paid": "anthropic",
       "zero_notes": [
@@ -120,6 +185,7 @@
     {
       "id": "ollama",
       "label": "Ollama on my computer",
+      "hint": "Ollama is already installed and runs AI on this computer.",
       "zero": "ollama",
       "paid": "ollama",
       "zero_notes": [
@@ -129,6 +195,92 @@
       "paid_notes": [
         "ollama_hardware"
       ]
+    }
+  ],
+  "dictation": [
+    {
+      "id": "keyboard",
+      "label": "Just type",
+      "hint": "Use your keyboard. Nothing else to set up.",
+      "status": "builtin",
+      "name": "Keyboard"
+    },
+    {
+      "id": "windows",
+      "label": "Windows voice typing",
+      "hint": "Built into Windows. Press Windows key + H in any text box and speak.",
+      "status": "external",
+      "name": "Windows voice typing",
+      "step": "To speak instead of type, click in a Jarvis text box and press Windows key + H. Windows turns your speech into text; Jarvis only sees the typed text."
+    },
+    {
+      "id": "wispr",
+      "label": "Wispr Flow (already installed)",
+      "hint": "Keeps working as usual and types into Jarvis like any other app. Jarvis has no Wispr Flow connector.",
+      "status": "external",
+      "name": "Wispr Flow",
+      "step": "Start Wispr Flow as you normally do and dictate into a Jarvis text box. Jarvis does not connect to Wispr Flow; it only sees the typed text."
+    },
+    {
+      "id": "vosk",
+      "label": "Jarvis offline voice commands",
+      "hint": "Hears a few command words, such as active, with no internet. Manual setup and a separate model download.",
+      "status": "manual",
+      "name": "Offline voice commands (Vosk)",
+      "step": "Offline voice commands are a manual setup from the source ZIP: follow Add offline voice in the build guide, download a small English Vosk model into models/voice-en yourself, then start Jarvis with that model.",
+      "note": "Offline voice commands recognize only a few words, such as active, and watch me when hand control is on. They do not take dictation or hold a conversation. Nearby speech can trigger them.",
+      "url": "https://github.com/Jgolding1998/jarvis-workbench/blob/main/docs/BUILD_YOUR_OWN.md#4-add-offline-voice"
+    }
+  ],
+  "reply": [
+    {
+      "id": "none",
+      "label": "Text on screen",
+      "hint": "Replies appear as text. Nothing is spoken.",
+      "status": "builtin",
+      "name": "Text replies"
+    },
+    {
+      "id": "read_aloud",
+      "label": "Read replies aloud on this computer",
+      "hint": "Uses a voice installed on this computer, only when you tick a box. Works in the setup chat on your computer.",
+      "status": "builtin",
+      "name": "Read aloud (on-device voice)",
+      "step": "In setup on your computer, open Try AI chat and tick Read replies aloud. Only voices installed on this computer are used; if none is found, replies stay as text.",
+      "note": "Read aloud uses your browser's on-device voices only and never the microphone. It works in the setup chat on your computer, not on this public page or in the dashboard. Press Stop or Escape to silence it."
+    },
+    {
+      "id": "cloud_voice",
+      "label": "A cloud voice such as ElevenLabs",
+      "hint": "Not built in. Replies stay as text for now.",
+      "status": "later",
+      "name": "Cloud voice (not built in)",
+      "note": "Jarvis does not connect to ElevenLabs or other cloud voice services, so replies stay as text. Any future voice service would need its own key and its own billing."
+    }
+  ],
+  "automation": [
+    {
+      "id": "none",
+      "label": "Not now",
+      "hint": "Keep it simple. You can add more later.",
+      "status": "off",
+      "name": "None"
+    },
+    {
+      "id": "agent_later",
+      "label": "Connect my own AI agent later (MCP)",
+      "hint": "Not built in. A later manual project for an agent you run and control.",
+      "status": "later",
+      "name": "Your own agent via MCP (later)",
+      "note": "Jarvis has no MCP bridge and cannot run tools for an agent. If you later connect an agent you own, give it the fewest permissions possible, keep camera, mouse and lock actions off, and approve each action yourself."
+    },
+    {
+      "id": "calendar_email",
+      "label": "Calendar or email help",
+      "hint": "Not built in. Use AI chat for drafts you paste yourself.",
+      "status": "later",
+      "name": "Calendar and email (not built in)",
+      "note": "Jarvis does not read or send email and does not open your calendar. You can ask AI chat for a draft and paste it into your own email app."
     }
   ],
   "providers": {
@@ -188,9 +340,10 @@
     "openai_zero": "OpenAI API requests need available API credits or billing on your API account, and a $0 plan cannot count on future usage being covered. At $0 Jarvis does not send paid OpenAI requests. NVIDIA trial access or Ollama are suggested instead.",
     "anthropic_zero": "Anthropic API requests need available API credits or billing on your Console account, and a $0 plan cannot count on future usage being covered. At $0 Jarvis does not send paid Anthropic requests. NVIDIA trial access or Ollama are suggested instead.",
     "chat_subscription": "A ChatGPT or Claude chat subscription is separate from API access. Some plans may include eligible API credits; check your account instead of assuming they do.",
-    "ollama_option": "Ollama runs models on your own computer with no usage bill. Choose Ollama above if you already have it.",
+    "ollama_option": "Ollama runs models on your own computer with no usage bill. Choose Ollama on the AI step if you already have it.",
     "ollama_hardware": "Ollama speed depends on your hardware. A recent graphics card can feel quick; a laptop without one runs small models on its processor and RAM, so expect slower replies from larger models. Local chat does not draw on your Jarvis allowance.",
-    "paid_usage": "The provider bills each request. Jarvis stops paid requests when its local allowance is used, but only a hard spend limit in your provider account caps what you are actually charged."
+    "paid_usage": "The provider bills each request. Jarvis stops paid requests when its local allowance is used, but only a hard spend limit in your provider account caps what you are actually charged.",
+    "large_budget": "A large allowance only matters for paid OpenAI or Anthropic requests. Set your provider's hard spend limit lower at first and raise it once you know your real usage."
   },
   "budget_note": "Your budget is a local allowance for paid AI requests on this Jarvis installation, not an invoice cap. Jarvis reserves $0.01 per paid attempt and stops when the allowance is used. Actual provider charges may differ, so also set a hard spend limit with your provider.",
   "steps": {

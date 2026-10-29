@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 
 
 def run_camera(service, stop: threading.Event, device=0):
@@ -60,37 +61,62 @@ def run_camera(service, stop: threading.Event, device=0):
             service.presence_camera_closed(lease)
 
 
-def run_voice(service, stop: threading.Event, model_path):
+SAMPLE_RATE = 16000
+BLOCK_SAMPLES = 1600
+STALL_SECONDS = 2.0
+
+
+def run_voice(service, stop: threading.Event, model_path, retry_seconds=2.0):
     try:
         import sounddevice
         import vosk
         vosk.SetLogLevel(-1)
         model = vosk.Model(str(model_path))
-        phrases = ["active", "watch me", "[unk]"] if service.hand.allowed else ["active", "[unk]"]
-        recognizer = vosk.KaldiRecognizer(model, 16000, json.dumps(phrases))
-        audio = queue.Queue(maxsize=8)
+    except Exception:
+        service.voice_status("Voice unavailable; use typed commands")
+        return
+    phrases = ["active", "watch me", "[unk]"] if service.hand.allowed else ["active", "[unk]"]
+    while not stop.is_set():
+        try:
+            _listen(service, stop, sounddevice, vosk.KaldiRecognizer(model, SAMPLE_RATE, json.dumps(phrases)))
+        except Exception:
+            pass
+        if not stop.is_set():
+            service.voice_status("Microphone stopped; retrying. Typed commands still work")
+            stop.wait(retry_seconds)
 
-        def receive(data, frames, timing, status):
+
+def _listen(service, stop, sounddevice, recognizer):
+    audio = queue.Queue(maxsize=20)
+
+    def receive(data, frames, timing, status):
+        try:
+            audio.put_nowait(bytes(data))
+        except queue.Full:
+            pass
+
+    with sounddevice.RawInputStream(samplerate=SAMPLE_RATE, blocksize=BLOCK_SAMPLES, dtype="int16", channels=1, callback=receive):
+        service.voice_status("Listening locally")
+        heard = time.monotonic()
+        while not stop.is_set():
             try:
-                audio.put_nowait(bytes(data))
-            except queue.Full:
-                pass
-
-        with sounddevice.RawInputStream(samplerate=16000, blocksize=4000, dtype="int16", channels=1, callback=receive):
-            service.voice_status("Listening locally")
-            while not stop.is_set():
+                block = audio.get(timeout=0.25)
+            except queue.Empty:
+                if time.monotonic() - heard > STALL_SECONDS:
+                    return
+                continue
+            heard = time.monotonic()
+            if recognizer.AcceptWaveform(block):
+                text = json.loads(recognizer.Result()).get("text", "").strip()
                 try:
-                    block = audio.get(timeout=0.25)
-                except queue.Empty:
-                    continue
-                if recognizer.AcceptWaveform(block):
-                    text = json.loads(recognizer.Result()).get("text", "").strip()
-                    try:
+                    with service.lock:
+                        if stop.is_set():
+                            return
                         if text == "active":
                             service.command(text, source="voice")
                         elif text == "watch me" and service.hand.allowed:
                             service.command(text, source="voice")
-                    except ValueError:
-                        service.voice_status("Heard " + text + ", but it is not allowed right now")
-    except Exception:
-        service.voice_status("Voice unavailable; use typed commands")
+                except ValueError:
+                    service.voice_status("Heard " + text + ", but it is not allowed right now")
+                except Exception:
+                    service.voice_status("Heard " + text + ", but the command failed")

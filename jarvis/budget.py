@@ -18,6 +18,7 @@ import time
 from . import install_tools
 
 RESERVE_MICRO_USD = 10_000
+MAX_LIMIT_USD = 10_000
 PRICING_CHECKED = "2026-10-28"
 VALID_UNTIL = "2026-11-27"
 PAID = frozenset({"openai", "anthropic"})
@@ -60,7 +61,7 @@ class BudgetLedger:
 
     @staticmethod
     def _limit(limit_usd):
-        if type(limit_usd) is not int or not 0 <= limit_usd <= 100:
+        if type(limit_usd) is not int or not 0 <= limit_usd <= MAX_LIMIT_USD:
             raise BudgetError()
         return limit_usd * 1_000_000
 
@@ -178,7 +179,8 @@ class BudgetLedger:
         for month, reserved, count in rows:
             if (not isinstance(month, str) or re.fullmatch(r"[0-9]{4}-(?:0[1-9]|1[0-2])", month) is None
                     or month.startswith("0000") or type(reserved) is not int or type(count) is not int
-                    or not 0 <= reserved <= 100_000_000 or not 0 <= count <= 10_000
+                    or not 0 <= reserved <= MAX_LIMIT_USD * 1_000_000
+                    or not 0 <= count <= MAX_LIMIT_USD * 1_000_000 // RESERVE_MICRO_USD
                     or reserved != count * RESERVE_MICRO_USD):
                 raise BudgetError()
         return {month: (reserved, count) for month, reserved, count in rows}

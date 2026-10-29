@@ -59,6 +59,8 @@ The installer deliberately leaves voice model selection and extraction to you. D
 
 The microphone listens locally for `active`. With hand control enabled, separately armed voice can also recognize `watch me`. Voice cannot arm desktop actions or disarm the presence guard. Nearby speech can cause false activation; speaker authentication is not claimed.
 
+Audio reaches the recognizer in 100 ms blocks. A command runs once Vosk detects the pause after it, so expect a short delay after you finish speaking. If the microphone stops delivering audio for two seconds or fails to open, the dashboard shows `Microphone stopped; retrying` and Jarvis reopens it every two seconds without reloading the voice model. A newly connected microphone may not appear until Jarvis restarts. Once shutdown begins, a command recognized afterward is discarded. A voice command whose dispatch already started finishes first, and shutdown then stops presence and hand control as usual.
+
 ## 5. Permit an optional desktop action
 
 For a Windows privacy lock:
@@ -79,7 +81,7 @@ Select **Boss Alert** instead of privacy lock. It writes `runtime/Boss Alert.xls
 
 ## 6. Try hand control
 
-Choose installer option **2** or **4**, then follow the [hand control guide](HAND_CONTROL.md). Practice uses a virtual cursor. Live `watch me` uses the verified local model, with real pointer movement off until separately permitted. A visual clap or Esc stops hands only.
+Choose installer option **2** or **4**, then follow the [hand control guide](HAND_CONTROL.md). Practice uses a virtual cursor. Live `watch me` uses the verified local model, with real pointer movement off until separately permitted. Point with one raised hand; a second hand held clearly lower is ignored. A visual clap with both hands raised, or Esc, stops hands only.
 
 The camera has one owner. Stop a mode explicitly and wait for its camera to close before starting the other. If a driver cannot release the camera, restart Jarvis.
 

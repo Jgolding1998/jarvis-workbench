@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="jarvis-mode" content="auto">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
-<meta name="description" content="Set up Jarvis in three choices: what you use your computer for, a monthly AI budget, and the AI account you already have.">
+<meta name="description" content="Set up Jarvis one short question at a time and get one recommended setup with install steps.">
 <meta name="theme-color" content="#01070a">
 <title>Set up Jarvis</title>
 <link rel="icon" href="favicon.svg">
@@ -17,108 +17,92 @@
   <header class="top">
     <span class="brand">
       <svg class="mark" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 3"/><circle cx="20" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="4.5" fill="currentColor"/></svg>
-      <span>JARVIS<span class="light"> WORKBENCH</span></span>
+      <span>JARVIS<span class="light"> SETUP</span></span>
     </span>
     <span id="mode-badge" class="badge">LOADING</span>
   </header>
 
   <main id="main" tabindex="-1">
     <noscript><p class="card">This setup page needs JavaScript. The written guide is in docs/INSTALL_WITH_AGENT.md in the source repository.</p></noscript>
-    <section class="intro">
-      <div>
-        <p class="eyebrow">SETUP / THREE CHOICES</p>
-        <h1>Set up Jarvis</h1>
-        <p class="lead">Pick what you use your computer for, an AI budget and the AI account you already have. Jarvis recommends one setup. Nothing installs or switches on by itself.</p>
-      </div>
-      <svg class="orb" viewBox="0 0 240 240" aria-hidden="true" focusable="false">
-        <defs>
-          <radialGradient id="orb-core" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#a5f8ff"/><stop offset=".35" stop-color="#25e7ff"/><stop offset="1" stop-color="#0b94aa" stop-opacity="0"/></radialGradient>
-        </defs>
-        <circle cx="120" cy="120" r="112" fill="none" stroke="#0c3440" stroke-width="1"/>
-        <circle cx="120" cy="120" r="104" fill="none" stroke="#25e7ff" stroke-width="1.5" stroke-dasharray="2 6" opacity=".7"/>
-        <path d="M120 20a100 100 0 0 1 86.6 50" fill="none" stroke="#25e7ff" stroke-width="3" stroke-linecap="round"/>
-        <path d="M33.4 170a100 100 0 0 1-13.4-50" fill="none" stroke="#ffb84d" stroke-width="3" stroke-linecap="round"/>
-        <circle cx="120" cy="120" r="84" fill="none" stroke="#0c3440" stroke-width="10"/>
-        <circle cx="120" cy="120" r="84" fill="none" stroke="#25e7ff" stroke-width="10" stroke-dasharray="30 14" opacity=".55"/>
-        <circle cx="120" cy="120" r="66" fill="none" stroke="#25e7ff" stroke-width="1" opacity=".8"/>
-        <g stroke="#25e7ff" stroke-width="1.5" opacity=".9"><path d="M120 46v10M120 184v10M46 120h10M184 120h10M68 68l7 7M165 165l7 7M68 172l7-7M165 75l7-7"/></g>
-        <circle cx="120" cy="120" r="48" fill="none" stroke="#a5f8ff" stroke-width="2"/>
-        <circle cx="120" cy="120" r="44" fill="url(#orb-core)"/>
-        <circle cx="120" cy="120" r="16" fill="#e6fdff"/>
-      </svg>
-    </section>
-
-    <form id="choices" class="card hud choices" novalidate>
-      <p class="panel-no" aria-hidden="true">01 / PROFILE</p>
-      <div class="field">
-        <label for="role">I mainly use my computer for</label>
-        <select id="role" name="role"></select>
-      </div>
-      <div class="field budget-field">
-        <div class="budget-head">
-          <label for="budget">Monthly AI budget</label>
-          <output id="budget-value" for="budget" class="budget-value">$0</output>
-        </div>
-        <input id="budget" name="budget" type="range" min="0" max="100" step="1" value="0" aria-describedby="budget-hint">
-        <div class="ticks" aria-hidden="true"><span>$0</span><span>$50</span><span>$100</span></div>
-        <p id="budget-hint" class="hint">A local allowance for paid AI on this computer, not an invoice cap. $0 means no paid AI requests.</p>
-        <div id="budget-meter" class="meter-box" hidden>
-          <div class="meter-row"><span id="meter-text"></span><span id="meter-month" class="mono"></span></div>
-          <meter id="meter-bar" min="0" max="1" value="0" aria-label="Allowance reserved this month"></meter>
-          <p id="meter-note" class="hint"></p>
-        </div>
-        <p id="limit-help" class="hint" hidden><a id="limit-link" href="#" target="_blank" rel="noopener noreferrer"></a></p>
-      </div>
-      <div class="field">
-        <label for="existing">AI account I already have</label>
-        <select id="existing" name="existing" aria-describedby="existing-hint"></select>
-        <p id="existing-hint" class="hint">For OpenAI or Anthropic this means API access. A chat subscription is separate.</p>
-      </div>
-    </form>
     <p id="notice" class="notice" role="status" hidden></p>
 
-    <div class="layout">
-      <section id="plan" class="card hud plan" aria-labelledby="plan-title" hidden>
-        <p class="panel-no" aria-hidden="true">02 / RECOMMENDED</p>
-        <h2 id="plan-title"></h2>
-        <p id="plan-summary" class="summary"></p>
-        <ul id="plan-chips" class="chips" aria-label="What this plan uses"></ul>
-        <p id="plan-caveat" class="caveat"></p>
-        <h3>Next steps</h3>
-        <ol id="plan-steps" class="steps"></ol>
-        <details class="more">
-          <summary>All costs, limits and tradeoffs</summary>
-          <ul id="plan-tradeoffs" class="notes"></ul>
-          <p><a id="provider-link" href="#" target="_blank" rel="noopener noreferrer">Provider sign-up page</a></p>
-        </details>
+    <form id="wizard" class="card wizard" novalidate hidden>
+      <div class="progress">
+        <p id="progress" class="progress-text">Question 1 of 6</p>
+        <div class="progress-bar" aria-hidden="true"><span id="progress-fill"></span></div>
+      </div>
+
+      <section class="step" data-step="role">
+        <h1><label for="role">What will you mostly use Jarvis for?</label></h1>
+        <select id="role" name="role" aria-describedby="progress role-hint step-error"></select>
+        <p id="role-hint" class="hint"></p>
       </section>
 
-      <div class="side">
-        <section id="get" class="card hud" aria-labelledby="get-title" hidden>
-          <p class="panel-no" aria-hidden="true">03 / GET JARVIS</p>
-          <h2 id="get-title">Get Jarvis for Windows</h2>
-          <a id="download" class="button primary" href="#" rel="noopener noreferrer" hidden>Download for Windows (ZIP)</a>
+      <section class="step" data-step="budget" hidden>
+        <h1><label for="budget">Monthly budget for paid AI</label></h1>
+        <output id="budget-value" for="budget budget-exact" class="budget-value">$0, free only</output>
+        <input id="budget" name="budget" type="range" min="0" max="1000" step="1" value="0" aria-describedby="progress budget-hint">
+        <div class="ticks" aria-hidden="true"><span>$0</span><span>$500</span><span>$1,000</span></div>
+        <div class="exact">
+          <label for="budget-exact">Or type an amount, up to $10,000</label>
+          <input id="budget-exact" name="budget-exact" type="number" inputmode="numeric" min="0" max="10000" step="1" value="0" aria-describedby="budget-hint step-error">
+        </div>
+        <p id="budget-hint" class="hint">$0 keeps everything free. This is a limit for paid AI on your computer, not a bill.</p>
+      </section>
+
+      <section class="step" data-step="existing" hidden>
+        <h1><label for="existing">Which AI do you already have?</label></h1>
+        <select id="existing" name="existing" aria-describedby="progress existing-hint step-error"></select>
+        <p id="existing-hint" class="hint"></p>
+      </section>
+
+      <section class="step" data-step="dictation" hidden>
+        <h1><label for="dictation">How do you want to give Jarvis words?</label></h1>
+        <select id="dictation" name="dictation" aria-describedby="progress dictation-hint step-error"></select>
+        <p id="dictation-hint" class="hint"></p>
+      </section>
+
+      <section class="step" data-step="reply" hidden>
+        <h1><label for="reply">How should AI replies reach you?</label></h1>
+        <select id="reply" name="reply" aria-describedby="progress reply-hint step-error"></select>
+        <p id="reply-hint" class="hint"></p>
+      </section>
+
+      <section class="step" data-step="automation" hidden>
+        <h1><label for="automation">Anything to automate later? (optional)</label></h1>
+        <select id="automation" name="automation" aria-describedby="progress automation-hint step-error"></select>
+        <p id="automation-hint" class="hint"></p>
+      </section>
+
+      <p id="step-error" class="error" role="alert" hidden></p>
+      <div class="nav">
+        <button id="back" class="button ghost" type="button" hidden>Back</button>
+        <button id="next" class="button primary" type="submit">Next</button>
+      </div>
+    </form>
+
+    <section id="result" class="card result" aria-labelledby="plan-title" hidden>
+      <p class="eyebrow">YOUR RECOMMENDED SETUP</p>
+      <h1 id="plan-title" tabindex="-1"></h1>
+      <p id="plan-summary" class="summary"></p>
+      <ul id="plan-stack" class="stack" aria-label="What this setup uses"></ul>
+      <p id="budget-paused" class="caveat" hidden></p>
+
+      <div class="next-step">
+        <h2>Next step</h2>
+        <div id="get" hidden>
+          <a id="download" class="button primary" href="#" rel="noopener noreferrer" hidden>Download Jarvis for Windows (ZIP)</a>
           <span id="download-pending" class="button pending" hidden>Windows download coming soon</span>
           <p id="download-note" class="hint"></p>
-          <button class="button ghost" type="button" data-action="save-json">Save my choices (JSON)</button>
-          <p class="quiet"><a id="source-zip" href="#" rel="noopener noreferrer">Source ZIP</a><span aria-hidden="true"> · </span><a class="agent-guide" href="#" target="_blank" rel="noopener noreferrer">Install with an AI agent</a></p>
-        </section>
-
-        <section id="phone" class="card hud" aria-labelledby="phone-title" hidden>
-          <p class="panel-no" aria-hidden="true">03 / HANDOFF</p>
-          <h2 id="phone-title">Continue on your computer</h2>
-          <p class="hint">A phone can plan and practice only. Installing Jarvis, the camera, mouse control and Windows lock all need a Windows computer.</p>
+        </div>
+        <div id="phone" hidden>
+          <p class="hint">A phone can plan only. Installing Jarvis, the camera, hand control and Windows lock need a Windows computer. Open this link there:</p>
           <code id="handoff-link" class="link-box"></code>
           <button class="button primary" type="button" data-action="copy-link">Copy link for my computer</button>
-          <button class="button ghost" type="button" data-action="save-json">Save my choices (JSON)</button>
-          <p class="quiet"><a href="index.html#practice">Practice the hand moves</a></p>
-        </section>
-
-        <section id="local" class="card hud" aria-labelledby="local-title" hidden>
-          <p class="panel-no" aria-hidden="true">03 / THIS COMPUTER</p>
-          <h2 id="local-title">On this computer</h2>
+          <p class="quiet"><a href="practice.html#practice">Practice the hand moves</a></p>
+        </div>
+        <div id="local" hidden>
           <div id="key-box" class="key-box" hidden>
-            <p><a id="key-help" href="#" target="_blank" rel="noopener noreferrer">Get an API key</a></p>
             <form id="key-form" autocomplete="off" novalidate>
               <label id="key-label" for="key-input"></label>
               <div class="row" id="key-row"><button class="button" type="submit">Save key</button></div>
@@ -127,34 +111,65 @@
               <span id="key-saved-text"></span>
               <button class="button ghost small" type="button" data-action="key-delete">Remove key</button>
             </div>
-            <p class="hint">Kept only on this computer and never shown again. Skip it to stay offline.</p>
+            <p class="hint"><a id="key-help" href="#" target="_blank" rel="noopener noreferrer">Get an API key</a>. Kept only on this computer and never shown again. Skip it to stay offline.</p>
           </div>
-          <button id="install" class="button primary" type="button" data-action="install">Install selected tools</button>
+          <div class="row actions">
+            <button id="install" class="button primary" type="button" data-action="install">Install selected tools</button>
+            <button id="launch" class="button" type="button" data-action="launch">Open dashboard</button>
+          </div>
           <p id="install-state" class="hint" role="status"></p>
-          <button id="launch" class="button" type="button" data-action="launch">Open dashboard</button>
-          <p class="hint">Available once the selected tools are installed. It opens with the camera, mouse control and Windows lock off.</p>
           <details id="ai-box" class="more" hidden>
             <summary>Try AI chat (optional)</summary>
+            <div class="more-body">
             <p class="hint">AI replies are text only. They cannot operate your computer or fetch live weather.</p>
             <label class="check"><input id="consent" type="checkbox"> Allow a short request that may use credits or trial quota</label>
-            <button class="button ghost small" type="button" data-action="test">Test connection</button>
+            <div><button class="button ghost small" type="button" data-action="test">Test connection</button></div>
             <label for="prompt">Question</label>
             <textarea id="prompt" rows="3" maxlength="2000" spellcheck="true"></textarea>
-            <button class="button small" type="button" data-action="chat">Ask</button>
-            <p id="reply" class="reply" hidden></p>
+            <div id="speak-row" class="row" hidden>
+              <label class="check"><input id="speak" type="checkbox"> Read replies aloud with a voice on this computer</label>
+              <button id="stop-speaking" class="button ghost small" type="button" data-action="stop-speaking" hidden>Stop</button>
+            </div>
+            <div><button class="button small" type="button" data-action="chat">Ask</button></div>
+            <p id="chat-reply" class="reply" hidden></p>
+            </div>
           </details>
-          <button class="button ghost small" type="button" data-action="import-choices">Load saved choices</button>
-          <input id="import-choices" type="file" accept="application/json,.json" hidden>
-          <button class="button ghost small" type="button" data-action="exit">Close setup</button>
-        </section>
+        </div>
         <p id="status" class="status" role="status" aria-live="polite"></p>
       </div>
-    </div>
+
+      <h2>All steps</h2>
+      <ol id="plan-steps" class="steps"></ol>
+
+      <details class="more">
+        <summary>Costs, limits and notes</summary>
+        <div class="more-body">
+        <p id="budget-line" class="hint"></p>
+        <div id="budget-meter" class="meter-box" hidden>
+          <div class="meter-row"><span id="meter-text"></span><span id="meter-month" class="mono"></span></div>
+          <meter id="meter-bar" min="0" max="1" value="0" aria-label="Allowance reserved this month"></meter>
+          <p id="meter-note" class="hint"></p>
+        </div>
+        <ul id="plan-tradeoffs" class="notes"></ul>
+        <p class="hint"><a id="provider-link" href="#" target="_blank" rel="noopener noreferrer">Provider sign-up page</a></p>
+        <p id="limit-help" class="hint" hidden><a id="limit-link" href="#" target="_blank" rel="noopener noreferrer"></a></p>
+        </div>
+      </details>
+
+      <div class="row tools">
+        <button id="change" class="button ghost small" type="button" data-action="change">Change answers</button>
+        <button class="button ghost small" type="button" data-action="save-json">Save my choices (JSON)</button>
+        <button class="button ghost small local-only" type="button" data-action="import-choices" hidden>Load saved choices</button>
+        <button class="button ghost small local-only" type="button" data-action="exit" hidden>Close setup</button>
+      </div>
+      <input id="import-choices" type="file" accept="application/json,.json" hidden>
+    </section>
   </main>
 
   <footer class="foot">
-    <a id="feedback" href="#" target="_blank" rel="noopener noreferrer">Feedback, ideas and problems</a>
+    <a id="feedback" href="#" target="_blank" rel="noopener noreferrer">Feedback</a>
     <a class="agent-guide" href="#" target="_blank" rel="noopener noreferrer">Install with an AI agent</a>
+    <a id="source-zip" href="#" rel="noopener noreferrer">Source ZIP</a>
     <a id="source-repo" href="#" target="_blank" rel="noopener noreferrer">Source</a>
     <a id="privacy-link" href="privacy.html" hidden>Privacy</a>
   </footer>
