@@ -1,0 +1,311 @@
+{
+  "schema": "jarvis-windows-build/1",
+  "bundle_name": "Jarvis-Windows",
+  "python": {
+    "version": "3.14.10",
+    "url": "https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip",
+    "sha256": "90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159",
+    "size": 12619664,
+    "sigstore_bundle_url": "https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip.sigstore",
+    "sigstore_identity": "hugo@python.org",
+    "sigstore_issuer": "https://github.com/login/oauth",
+    "authenticode_subject": "Python Software Foundation",
+    "pth_name": "python314._pth",
+    "stdlib_zip": "python314.zip"
+  },
+  "target": {
+    "platform": "win_amd64",
+    "python_version": "3.14",
+    "implementation": "cp",
+    "abi": "cp314"
+  },
+  "build_tools": {
+    "sigstore": "4.5.1",
+    "setuptools": "84.2.1"
+  },
+  "wheels": [
+    {
+      "name": "absl-py",
+      "version": "2.5.1",
+      "filename": "absl_py-2.5.1-py3-none-any.whl",
+      "sha256": "721200f2f0e9960f2ca9dc3a2a706b201f5f75d812c158f059cbbe29eeafbdb8",
+      "size": 137673
+    },
+    {
+      "name": "certifi",
+      "version": "2026.10.23",
+      "filename": "certifi-2026.10.23-py3-none-any.whl",
+      "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1",
+      "size": 135082
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "filename": "cffi-2.1.1-cp314-cp314-win_amd64.whl",
+      "sha256": "3222ba5d678f80a030e6afbcc33dc1ae5cb45facabb61cee2c7016b8432fde48",
+      "size": 187949
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.2",
+      "filename": "charset_normalizer-3.5.2-cp314-cp314-win_amd64.whl",
+      "sha256": "e4e81e09c1578b8df602e3db08b0b3ea0a6947ad612f52bf8dc5ea8d47691f0c",
+      "size": 210965
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "filename": "colorama-0.4.6-py2.py3-none-any.whl",
+      "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+      "size": 25335
+    },
+    {
+      "name": "contourpy",
+      "version": "1.4.0",
+      "filename": "contourpy-1.4.0-cp314-cp314-win_amd64.whl",
+      "sha256": "181bea01bc742734ae672fa00c717d855dd35e1f029536406538c52e7b0cd73d",
+      "size": 240101
+    },
+    {
+      "name": "cycler",
+      "version": "0.12.1",
+      "filename": "cycler-0.12.1-py3-none-any.whl",
+      "sha256": "85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30",
+      "size": 8321
+    },
+    {
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "filename": "flatbuffers-25.12.19-py2.py3-none-any.whl",
+      "sha256": "7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4",
+      "size": 26661
+    },
+    {
+      "name": "fonttools",
+      "version": "4.68.0",
+      "filename": "fonttools-4.68.0-cp314-cp314-win_amd64.whl",
+      "sha256": "1782f2cf952eb262c4126b1f57b5f0e027e71bf2b632350a033dec526f448428",
+      "size": 2536130
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "filename": "idna-3.20-py3-none-any.whl",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+      "size": 69583
+    },
+    {
+      "name": "kiwisolver",
+      "version": "1.5.1",
+      "filename": "kiwisolver-1.5.1-cp314-cp314-win_amd64.whl",
+      "sha256": "f4167e87b397f273dc2356fcf1eaf50a6bac51e6105f45103ef7129c8efb0255",
+      "size": 72282
+    },
+    {
+      "name": "matplotlib",
+      "version": "3.11.2",
+      "filename": "matplotlib-3.11.2-cp314-cp314-win_amd64.whl",
+      "sha256": "ecea603dd2fbf8242fd31a305a8b12a4ece2de28096870c65fdd0d1e35b8d9a6",
+      "size": 9505972
+    },
+    {
+      "name": "mediapipe",
+      "version": "1.2.0",
+      "filename": "mediapipe-1.2.0-py3-none-win_amd64.whl",
+      "sha256": "d03d01e1dee45c358d3c41f2a02aca840e469659ead5b2a4222b431069f19d64",
+      "size": 24492602
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.4",
+      "filename": "numpy-2.5.4-cp314-cp314-win_amd64.whl",
+      "sha256": "2ca144f15135b6212a5c47b1e2aeca6e412f102f95a2d5d88d8aec77eb255de3",
+      "size": 12703552
+    },
+    {
+      "name": "opencv-contrib-python",
+      "version": "4.13.0.92",
+      "filename": "opencv_contrib_python-4.13.0.92-cp37-abi3-win_amd64.whl",
+      "sha256": "cb694dcf76bb2c8d7fa573fc1a99339e8b6640194d7778381e74cc3445369e45",
+      "size": 46486178
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "filename": "packaging-26.3-py3-none-any.whl",
+      "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+      "size": 129956
+    },
+    {
+      "name": "pillow",
+      "version": "13.0.0",
+      "filename": "pillow-13.0.0-cp314-cp314-win_amd64.whl",
+      "sha256": "f7cbb7a64e7ec664775195e4f81923bc8a93d9451b963f844e59118f63147a7a",
+      "size": 7281830
+    },
+    {
+      "name": "pycparser",
+      "version": "3.12",
+      "filename": "pycparser-3.12-py3-none-any.whl",
+      "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
+      "size": 62600
+    },
+    {
+      "name": "pyparsing",
+      "version": "3.3.3",
+      "filename": "pyparsing-3.3.3-py3-none-any.whl",
+      "sha256": "ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4",
+      "size": 126420
+    },
+    {
+      "name": "python-dateutil",
+      "version": "3.0.0",
+      "filename": "python_dateutil-3.0.0-py2.py3-none-any.whl",
+      "sha256": "3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd",
+      "size": 94659
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "filename": "requests-2.34.2-py3-none-any.whl",
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "size": 73075
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "filename": "six-1.17.0-py2.py3-none-any.whl",
+      "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+      "size": 11050
+    },
+    {
+      "name": "sounddevice",
+      "version": "0.5.6",
+      "filename": "sounddevice-0.5.6-py3-none-win_amd64.whl",
+      "sha256": "7f4162f514f007b0bf25a3ccfed3f1705bc2ec311888a90232729eec4f57a4f4",
+      "size": 1009630
+    },
+    {
+      "name": "tqdm",
+      "version": "4.70.1",
+      "filename": "tqdm-4.70.1-py3-none-any.whl",
+      "sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73",
+      "size": 80199
+    },
+    {
+      "name": "tzdata",
+      "version": "2026.6",
+      "filename": "tzdata-2026.6-py2.py3-none-any.whl",
+      "sha256": "0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec",
+      "size": 348210
+    },
+    {
+      "name": "urllib3",
+      "version": "2.8.0",
+      "filename": "urllib3-2.8.0-py3-none-any.whl",
+      "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "size": 135717
+    },
+    {
+      "name": "vosk",
+      "version": "0.3.45",
+      "filename": "vosk-0.3.45-py3-none-win_amd64.whl",
+      "sha256": "6994ddc68556c7e5730c3b6f6bad13320e3519b13ce3ed2aa25a86724e7c10ac",
+      "size": 13997596
+    },
+    {
+      "name": "websockets",
+      "version": "17.3",
+      "filename": "websockets-17.3-cp314-cp314-win_amd64.whl",
+      "sha256": "2b06213c8e1ce93b18d0476d7a5e647436c8f23d099888c9065e930e80f4bed5",
+      "size": 218582
+    }
+  ],
+  "sdists": [
+    {
+      "name": "srt",
+      "version": "3.5.3",
+      "url": "https://files.pythonhosted.org/packages/66/b7/4a1bc231e0681ebf339337b0cd05b91dc6a0d701fa852bb812e244b7a030/srt-3.5.3.tar.gz",
+      "sha256": "4884315043a4f0740fd1f878ed6caa376ac06d70e135f306a6dc44632eed0cc0"
+    }
+  ],
+  "hand_model": {
+    "url": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+    "sha256": "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1",
+    "license": "Apache-2.0",
+    "model_card": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Hand%20Tracking%20(Lite_Full)%20with%20Fairness%20Oct%202021.pdf"
+  },
+  "license_supplements": [
+    {
+      "applies_to": "flatbuffers",
+      "file": "flatbuffers-25.12.19-LICENSE.txt",
+      "title": "FlatBuffers license (Apache-2.0) from the upstream v25.12.19 tag; the wheel ships no license file",
+      "url": "https://raw.githubusercontent.com/google/flatbuffers/v25.12.19/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "applies_to": "vosk",
+      "file": "vosk-0.3.45-COPYING.txt",
+      "title": "Vosk API license (Apache-2.0) from the upstream v0.3.45 tag; the wheel ships no license file",
+      "url": "https://raw.githubusercontent.com/alphacep/vosk-api/v0.3.45/COPYING",
+      "sha256": "bb618af833c817ab01c1564bd3ec75ba4b4f9cf30910a4a2168e30a674ee8cc6"
+    },
+    {
+      "applies_to": "vosk",
+      "file": "GPL-3.0.txt",
+      "title": "GNU GPL v3 covering the unmodified MinGW GCC runtime DLLs inside the vosk wheel (vendor/vosk/libstdc++-6.dll, vendor/vosk/libgcc_s_seh-1.dll), distributed under the GCC Runtime Library Exception; GCC source: https://gcc.gnu.org/",
+      "url": "https://www.gnu.org/licenses/gpl-3.0.txt",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "applies_to": "vosk",
+      "file": "GCC-RUNTIME-LIBRARY-EXCEPTION-3.1.txt",
+      "title": "GCC Runtime Library Exception 3.1 for the GCC runtime DLLs inside the vosk wheel",
+      "url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14.2.0/COPYING.RUNTIME",
+      "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
+    },
+    {
+      "applies_to": "vosk",
+      "file": "mingw-w64-winpthreads-COPYING.txt",
+      "title": "mingw-w64 winpthreads license for vendor/vosk/libwinpthread-1.dll inside the vosk wheel",
+      "url": "https://raw.githubusercontent.com/mingw-w64/mingw-w64/v12.0.0/mingw-w64-libraries/winpthreads/COPYING",
+      "sha256": "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177"
+    },
+    {
+      "applies_to": "sounddevice",
+      "file": "portaudio-v19.7.0-LICENSE.txt",
+      "title": "PortAudio license (MIT-style) for the unmodified PortAudio DLLs in vendor/_sounddevice_data/portaudio-binaries; the sounddevice wheel ships no PortAudio license file",
+      "url": "https://raw.githubusercontent.com/PortAudio/portaudio/v19.7.0/LICENSE.txt",
+      "sha256": "ec52a1952d701f94e5135719a47376da4ee0b4a0201f1cafb49f61db6480ac3d"
+    }
+  ],
+  "features": {
+    "camera": [
+      "opencv-contrib-python"
+    ],
+    "hand": [
+      "opencv-contrib-python",
+      "mediapipe"
+    ],
+    "voice": [
+      "vosk",
+      "sounddevice",
+      "srt"
+    ]
+  },
+  "app": {
+    "include": [
+      "jarvis/*.py",
+      "web/*",
+      "docs/*.md",
+      "LICENSE",
+      "README.md",
+      "SECURITY.md",
+      "requirements-*.txt"
+    ],
+    "extra_files": [
+      "jarvis/bundle.py",
+      "docs/WINDOWS_BUNDLE.md"
+    ]
+  }
+}

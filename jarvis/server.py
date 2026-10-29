@@ -16,6 +16,9 @@ from .actions import Actions
 from .handcontrol import CameraBroker, CameraBusy, HandControl, UserError
 from .hand_control import watch_intent
 from .presence import Presence
+from .onboarding import Onboarding, OnboardingError
+from .credential_store import CredentialError
+from .provider_client import ProviderError
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -23,6 +26,7 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js",
           "/style.css": ("style.css", "text/css; charset=utf-8"), "/setup": ("setup.html", "text/html; charset=utf-8"),
           "/setup.js": ("setup.js", "text/javascript; charset=utf-8"), "/setup.css": ("setup.css", "text/css; charset=utf-8"),
           "/setup-catalog.json": ("setup-catalog.json", "application/json"),
+          "/quickstart-catalog.json": ("quickstart-catalog.json", "application/json"),
           "/provider-catalog.json": ("provider-catalog.json", "application/json")}
 
 
@@ -231,12 +235,13 @@ class Service:
 class SetupContext:
     """Local setup wizard state: catalog, ignored runtime directory, optional exit hook."""
 
-    def __init__(self, catalog=None, runtime_dir=None, on_exit=None, root=None):
+    def __init__(self, catalog=None, runtime_dir=None, on_exit=None, root=None, onboarding=None):
         self.catalog = catalog or planner.load_catalog()
         self.root = Path(root or planner.ROOT)
         self.runtime_dir = Path(runtime_dir or self.root / "runtime")
         self.on_exit = on_exit
         self.write_lock = threading.Lock()
+        self.onboarding = onboarding or Onboarding(self.root)
 
 
 class LocalHTTPServer(ThreadingHTTPServer):
@@ -311,6 +316,8 @@ def make_handler(service, token, setup=None):
                 self._send(200, report)
             elif self.path == "/api/setup/config":
                 self._send(200, {"answers": planner.load_config(setup.runtime_dir, setup.catalog)})
+            elif self.path == "/api/quickstart":
+                self._send(200, setup.onboarding.snapshot())
             elif self.path in STATIC and (WEB / STATIC[self.path][0]).is_file():
                 name, kind = STATIC[self.path]
                 self._send(200, (WEB / name).read_bytes(), kind)
@@ -329,12 +336,38 @@ def make_handler(service, token, setup=None):
                 if not declared.isascii() or not declared.isdecimal() or len(declared) > 6:
                     raise ValueError("Invalid length")
                 length = int(declared)
-                limit = 8192 if self.path == "/api/setup/apply" else 2048
+                limit = 20000 if self.path.startswith("/api/quickstart/") else 8192 if self.path == "/api/setup/apply" else 2048
                 if not 1 <= length <= limit or self.headers.get("Content-Type") != "application/json":
                     raise ValueError("Send a small JSON request")
                 data = planner.parse_json(self.rfile.read(length))
                 if not isinstance(data, dict):
                     raise ValueError("Expected an object")
+                if self.path.startswith("/api/quickstart/"):
+                    manager = setup.onboarding
+                    action = self.path.removeprefix("/api/quickstart/")
+                    expected = {"save": {"choices"}, "key": {"provider", "key"},
+                                "key/delete": {"provider"}, "test": {"provider", "consent"},
+                                "chat": {"provider", "prompt", "consent"},
+                                "install": {"consent"}, "launch": {"consent"}}
+                    if action not in expected:
+                        self._send(404, {"error": "Not found"})
+                        return
+                    if set(data) != expected[action]:
+                        raise ValueError("Unexpected fields")
+                    if action == "save":
+                        result = manager.save(data["choices"])
+                    elif action == "key":
+                        result = manager.save_key(data["provider"], data["key"])
+                    elif action == "key/delete":
+                        result = manager.delete_key(data["provider"])
+                    elif action in {"chat", "test"}:
+                        result = manager.chat(data["provider"], data.get("prompt", "Reply with the word ready."), data["consent"])
+                    elif action == "install":
+                        result = manager.start_install(data["consent"])
+                    else:
+                        result = manager.launch(data["consent"])
+                    self._send(200, result)
+                    return
                 if self.path == "/api/setup/apply":
                     if set(data) != {"answers"}:
                         raise ValueError("Unexpected fields")
@@ -369,7 +402,7 @@ def make_handler(service, token, setup=None):
                 else:
                     self._send(404, {"error": "Not found"})
                     return
-            except UserError as error:
+            except (UserError, OnboardingError, CredentialError, ProviderError) as error:
                 self._send(400, {"error": str(error)})
                 return
             except (ValueError, TypeError, AttributeError, OSError, OverflowError, RecursionError):

@@ -1,6 +1,7 @@
 "use strict";
-/* Jarvis setup wizard. Deterministic planner, no provider calls, no credentials.
-   The planner mirrors jarvis/planner.py; tests/test_planner.py checks both agree. */
+/* Jarvis setup. The three-choice quickstart mirrors jarvis/quickstart.py (tests/test_quickstart.py).
+   The older detailed planner below mirrors jarvis/planner.py (tests/test_planner.py) and stays exported for it.
+   The hosted page never calls an API and never shows a key field. */
 (function (root) {
   const ANSWERS_SCHEMA = "jarvis-setup-answers/1";
   const PLAN_SCHEMA = "jarvis-setup-plan/1";
@@ -228,20 +229,136 @@
       (/MacIntel/i.test(info.platform || "") && Number(info.maxTouchPoints) > 1);
   }
 
-  const api = {validateAnswers, buildPlan, defaultAnswers, readProviderCatalog, importedAnswers, isMobilePlanner, money};
+  /* Three-choice quickstart. Mirrors jarvis/quickstart.py; tests/test_quickstart.py checks both agree. */
+  const QUICKSTART_SCHEMA = "jarvis-quickstart-catalog/1";
+  const CHOICES_SCHEMA = "jarvis-quickstart-choices/1";
+  const CHOICE_KEYS = ["role", "budget", "existing"];
+  const CHOICE_ERRORS = {
+    shape: "Choose a role, a monthly budget and an existing tool.",
+    role: "Choose a role from the list.",
+    budget: "Choose a monthly budget from the list.",
+    existing: "Choose an existing tool from the list.",
+  };
+  const findId = (items, id) => items.find((item) => item.id === id) || null;
+
+  function validateChoices(data, catalog) {
+    if (!isPlainObject(data) || Object.keys(data).length !== CHOICE_KEYS.length || !CHOICE_KEYS.every((key) => own(data, key))) throw new Error(CHOICE_ERRORS.shape);
+    const role = data.role;
+    let budget = data.budget;
+    const existing = data.existing;
+    if (typeof role !== "string" || !findId(catalog.roles, role)) throw new Error(CHOICE_ERRORS.role);
+    const allowed = ids(catalog.budgets);
+    if (typeof budget === "string" && allowed.map(String).includes(budget)) budget = Number(budget);
+    if (typeof budget !== "number" || !Number.isInteger(budget) || !allowed.includes(budget)) throw new Error(CHOICE_ERRORS.budget);
+    if (typeof existing !== "string" || !findId(catalog.existing, existing)) throw new Error(CHOICE_ERRORS.existing);
+    return {role, budget, existing};
+  }
+
+  function recommend(data, catalog) {
+    const choices = validateChoices(data, catalog);
+    const role = findId(catalog.roles, choices.role);
+    const existing = findId(catalog.existing, choices.existing);
+    const paid = choices.budget > 0;
+    const providerId = paid ? existing.paid : existing.zero;
+    const provider = catalog.providers[providerId];
+    const features = role.features.slice();
+    const tradeoffs = existing[paid ? "paid_notes" : "zero_notes"].map((note) => catalog.notes[note])
+      .concat(features.map((name) => catalog.features[name].note), [catalog.budget_note]);
+    const steps = [catalog.steps.download, catalog.steps.start, provider.step]
+      .concat(features.map((name) => catalog.features[name].step), [catalog.steps.dashboard]);
+    if (features.includes("hand")) steps.push(catalog.steps.practice);
+    const plan = {choices, provider: providerId, features, title: role.title + " with " + provider.name,
+      summary: role.summary + " " + provider.summary, tradeoffs, setup_url: provider.setup_url, steps};
+    if (own(provider, "model")) plan.model = provider.model;
+    return plan;
+  }
+
+  /* Returns null when the address carries no choices; throws when it carries invalid ones. */
+  function choicesFromQuery(search, catalog) {
+    const params = new URLSearchParams(search);
+    if (!CHOICE_KEYS.some((key) => params.has(key))) return null;
+    const data = {};
+    CHOICE_KEYS.forEach((key) => { if (params.has(key)) data[key] = params.get(key); });
+    return validateChoices(data, catalog);
+  }
+
+  function isLoopbackPage(where, forced) {
+    return forced !== "hosted" && where.protocol === "http:" && where.hostname === "127.0.0.1";
+  }
+
+  function isSafeLaunchUrl(value) {
+    const match = typeof value === "string" ? /^http:\/\/127\.0\.0\.1:(\d{1,5})\/$/.exec(value) : null;
+    return Boolean(match) && Number(match[1]) >= 1 && Number(match[1]) <= 65535;
+  }
+
+  /* The local service answer is untrusted input: keep only the contracted fields. */
+  function readQuickstartState(data, catalog) {
+    if (!isPlainObject(data) || data.local !== true) return null;
+    let choices = null;
+    try { choices = data.choices === null || data.choices === undefined ? null : validateChoices(data.choices, catalog); } catch (error) { choices = null; }
+    const keys = isPlainObject(data.credentials) ? data.credentials : {};
+    const credentials = {nvidia: keys.nvidia === true, openai: keys.openai === true, anthropic: keys.anthropic === true};
+    const install = isPlainObject(data.install) && ["idle", "running", "ready", "error"].includes(data.install.state) ? data.install.state : "idle";
+    return {local: true, choices, credentials, install};
+  }
+
+  /* A saved choices file is untrusted: at most 2 KiB, no duplicate keys, exact fields, fixed error text. */
+  const IMPORT_LIMIT = 2048;
+  const IMPORT_ERROR = "Choose a Jarvis choices file saved from this setup page (under 2 KB).";
+  function importedChoices(text, catalog) {
+    try {
+      if (typeof text !== "string" || new TextEncoder().encode(text).length > IMPORT_LIMIT) throw new Error();
+      const data = parseImportJson(text);
+      if (!isPlainObject(data) || Object.keys(data).length !== 2 || data.schema !== CHOICES_SCHEMA || !own(data, "choices")) throw new Error();
+      return validateChoices(data.choices, catalog);
+    } catch (error) {
+      throw new Error(IMPORT_ERROR);
+    }
+  }
+
+  const api = {validateAnswers, buildPlan, defaultAnswers, readProviderCatalog, importedAnswers, isMobilePlanner, money,
+    validateChoices, recommend, choicesFromQuery, isLoopbackPage, isSafeLaunchUrl, readQuickstartState, importedChoices, IMPORT_LIMIT, IMPORT_ERROR, CHOICE_ERRORS, QUICKSTART_SCHEMA, CHOICES_SCHEMA};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => boot(api));
 })(typeof globalThis !== "undefined" ? globalThis : this);
 
+/* Fixed, input-free messages. Server error text is never shown. */
+const MESSAGES = {
+  catalog: "Setup could not load. Refresh the page to try again.",
+  local: "Jarvis could not reach its setup service on this computer. Close this page and open the Jarvis start file again.",
+  query: "That link had choices this page does not recognize, so the defaults are shown.",
+  save: "Your choices were not saved. Try again.",
+  keyEmpty: "Paste a key first.",
+  key: "The key was not saved. Check that you copied the whole key, then try again.",
+  keySaved: "Key saved on this computer. The field was cleared.",
+  keyDelete: "The key was not removed. Try again.",
+  keyDeleted: "Key removed from this computer.",
+  consent: "Tick the box to allow a short request first.",
+  test: "The test did not succeed. Check the key, your internet connection and the provider's status page.",
+  tested: "Connection works.",
+  promptEmpty: "Type a question first.",
+  chat: "No reply. Check the key and your internet connection, then try again.",
+  install: "Install did not start. Try again.",
+  installIdle: "Downloads only what your plan needs. Nothing is switched on.",
+  installRunning: "Installing. You can keep this page open.",
+  installReady: "Selected tools are installed. Nothing was switched on.",
+  installError: "Install stopped before finishing. Check your internet connection, then choose Install selected tools again.",
+  launch: "The dashboard did not open. Try again, or close Jarvis and open its start file again.",
+  launchWait: "Install the selected tools first. The dashboard opens once they are ready.",
+  exit: "Setup could not close itself. Close the Jarvis window to stop it.",
+  exited: "Setup closed. You can close this page.",
+  copied: "Link copied. Open it on your Windows computer.",
+  copyFailed: "Select the link above and copy it yourself.",
+  savedJson: "Choices saved. The file holds your three answers only, nothing secret.",
+  importBad: "Choose a Jarvis choices file saved from this setup page (under 2 KB).",
+  imported: "Saved choices loaded. Nothing was switched on.",
+};
+
 function boot(api) {
   const $ = (id) => document.getElementById(id);
-  const STEPS = ["welcome", "purpose", "budget", "tools", "voice", "device", "plan"];
-  const LABELS = ["Start", "Use", "Budget", "AI tools", "Voice", "Computer", "Plan"];
   const meta = document.querySelector('meta[name="jarvis-mode"]');
   const forced = meta ? meta.content : "auto";
-  const local = forced !== "hosted" && location.protocol === "http:" && location.hostname === "127.0.0.1";
-  const phone = !local && api.isMobilePlanner(navigator);
-  const state = {catalog: null, answers: null, step: "welcome", token: "", diagnostics: null, providers: null, saved: false};
+  const state = {catalog: null, choices: null, token: "", local: false, server: null, phone: false, busy: false, polls: 0};
 
   function el(tag, attributes, children) {
     const node = document.createElement(tag);
@@ -257,341 +374,362 @@ function boot(api) {
     $("status").textContent = message;
     $("status").classList.toggle("bad", Boolean(bad));
   }
-  function copyText(text, success, failure) {
-    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-      status(failure, true);
-      return;
-    }
-    navigator.clipboard.writeText(text).then(() => status(success), () => status(failure, true));
+  function notice(message) {
+    $("notice").textContent = message;
+    $("notice").hidden = !message;
   }
+
   async function localJson(path, body) {
-    const options = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json", "X-Jarvis-Token": state.token}, body: JSON.stringify(body)};
+    if (!api.isLoopbackPage(location, forced) || (!state.local && path !== "/api/session" && path !== "/api/quickstart")) throw new Error("not local");
+    const options = body === undefined ? {cache: "no-store"} : {method: "POST", cache: "no-store", headers: {"Content-Type": "application/json", "X-Jarvis-Token": state.token}, body: JSON.stringify(body)};
     const response = await fetch(path, options);
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Request failed");
-    return result;
+    if (!response.ok) throw new Error("request failed");
+    return response.json();
+  }
+  const closed = () => document.body.classList.contains("closed");
+  function lockSelects() {
+    const locked = closed() || state.busy || Boolean(state.local && state.server && state.server.install === "running");
+    ["role", "budget", "existing"].forEach((id) => { $(id).disabled = locked; });
+  }
+  /* One local mutation at a time: the dropdowns and the triggering button stay disabled until it settles. */
+  async function act(button, work) {
+    if (state.busy) return;
+    state.busy = true;
+    if (button) button.disabled = true;
+    lockSelects();
+    try { await work(); } finally {
+      state.busy = false;
+      if (button && !closed()) button.disabled = false;
+      if (state.local && state.choices) render();
+      lockSelects();
+    }
   }
 
-  function show(step) {
-    state.step = step;
-    document.querySelectorAll(".step").forEach((section) => { section.hidden = section.dataset.step !== step; });
-    const index = STEPS.indexOf(step);
-    $("progress").replaceChildren(...STEPS.map((name, position) => el("li", {className: position < index ? "done" : position === index ? "current" : "", text: LABELS[position], "aria-current": position === index ? "step" : "false"})));
-    $("progress").parentElement.hidden = step === "declined";
-    if (step === "plan") renderPlan();
-    $("wizard").focus({preventScroll: true});
-    window.scrollTo({top: 0});
+  function fillSelect(id, items) {
+    $(id).replaceChildren(...items.map((item) => el("option", {value: String(item.id), text: item.label})));
   }
+  function provider(plan) { return state.catalog.providers[plan.provider]; }
 
-  function radioCard(group, item, checked, title, body, badge) {
-    const input = el("input", {type: "radio", name: group, value: item.id});
-    input.checked = checked;
-    const children = [input, el("b", {text: title})];
-    if (badge) children.push(el("span", {className: "tag " + badge.toLowerCase().replace(/[^a-z]+/g, "-"), text: badge}));
-    children.push(el("p", {text: body}));
-    return el("label", {className: "choice"}, children);
-  }
-
-  function renderPurpose() {
+  function render() {
     const catalog = state.catalog;
-    $("presets").replaceChildren(...catalog.presets.map((preset) => radioCard("preset", preset, state.answers.preset === preset.id, preset.name, preset.goal)));
-    const selectable = catalog.features.filter((feature) => feature.selectable);
-    $("custom-list").replaceChildren(...selectable.map((feature) => {
-      const input = el("input", {type: "checkbox", value: feature.id});
-      input.checked = state.answers.features.includes(feature.id);
-      input.addEventListener("change", () => setFeature(feature.id, input.checked));
-      return el("label", {className: "check"}, [input, el("span", {text: feature.name + (feature.maturity === "preview" ? " (preview)" : "")})]);
+    const plan = api.recommend(state.choices, catalog);
+    $("role").value = plan.choices.role;
+    $("budget").value = String(plan.choices.budget);
+    $("existing").value = plan.choices.existing;
+    $("plan").hidden = false;
+    $("plan-title").textContent = plan.title;
+    $("plan-summary").textContent = plan.summary;
+    const chips = plan.features.map((name) => el("li", {text: catalog.features[name].name}));
+    chips.push(el("li", {className: "ai", text: "AI: " + provider(plan).short + (plan.model ? " (" + plan.model + ")" : "")}));
+    $("plan-chips").replaceChildren(...chips);
+    $("plan-steps").replaceChildren(...plan.steps.map((text, index) => {
+      const done = state.local && index < 2;
+      return el("li", {className: done ? "done" : ""}, done ? [el("span", {text}), el("span", {className: "done-tag", text: "Done"})] : [el("span", {text})]);
     }));
-    $("custom-features").hidden = state.answers.preset !== "custom";
-  }
-  function setFeature(id, on) {
-    const set = new Set(state.answers.features);
-    if (on) set.add(id); else set.delete(id);
-    state.answers.features = Array.from(set);
-  }
-
-  function renderChoices() {
-    const catalog = state.catalog;
-    $("ai-tool").replaceChildren(...catalog.ai_tools.map((tool) => el("option", {value: tool.id, text: tool.name})));
-    $("ai-tool").value = state.answers.ai_tool;
-    $("ai-guidance").textContent = catalog.ai_tools.find((tool) => tool.id === state.answers.ai_tool).guidance;
-    $("voice-options").replaceChildren(...catalog.voice_options.map((voice) => radioCard("voice", voice, state.answers.voice === voice.id, voice.name, voice.guidance,
-      voice.kind === "implemented" ? "BUILT IN" : voice.kind === "guidance" ? "GUIDANCE ONLY" : "")));
-    $("device-os").replaceChildren(...catalog.os.map((item) => el("option", {value: item.id, text: item.name})));
-    $("device-os").value = state.answers.device.os;
-    $("device-ram").replaceChildren(...catalog.ram.map((item) => el("option", {value: item.id, text: item.name})));
-    $("device-ram").value = state.answers.device.ram;
-    ["camera", "microphone"].forEach((name) => {
-      $("device-" + name).replaceChildren(...[[true, "Yes"], [false, "No"]].map(([value, label]) => {
-        const input = el("input", {type: "radio", name: "device-" + name, value: String(value)});
-        input.checked = state.answers.device[name] === value;
-        input.addEventListener("change", () => { state.answers.device[name] = value; });
-        return el("label", {className: "pill-choice"}, [input, el("span", {text: label})]);
-      }));
-    });
-    $("budget-range").value = String(Math.min(500, Math.round(state.answers.budget_usd / 5) * 5));
-    $("budget-number").value = String(state.answers.budget_usd);
+    $("plan-caveat").textContent = plan.tradeoffs[0];
+    $("plan-tradeoffs").replaceChildren(...plan.tradeoffs.map((text) => el("li", {text})));
+    $("provider-link").href = plan.setup_url;
+    $("provider-link").textContent = provider(plan).short + " setup page";
+    $("handoff-link").textContent = handoffLink(plan.choices);
+    if (state.local) renderLocal(plan);
+    lockSelects();
   }
 
-  function taskState(task) {
-    if (task.kind === "pending") return ["pending", "Not built yet"];
-    if (task.id === "save") return state.saved ? ["done", "Saved"] : local ? ["automatic", "Jarvis does this when you choose Apply"] : ["manual", "Available when you run the wizard on your computer"];
-    if (!task.check.length) return [task.kind, task.kind === "automatic" ? "Jarvis does this" : "You do this"];
-    const diagnostics = state.diagnostics;
-    if (!diagnostics) return ["manual", "You do this"];
-    const ok = task.check.every((check) => check === "local" ? true : check === "python" ? diagnostics.python_ok : check === "voice_model" ? diagnostics.voice_model : check === "hand_model" ? diagnostics.hand_model : Boolean(diagnostics.packages[check]));
-    return ok ? ["done", "Detected on this computer"] : ["manual", "Remaining"];
+  function handoffLink(choices) {
+    const url = new URL(location.href);
+    url.search = new URLSearchParams({role: choices.role, budget: String(choices.budget), existing: choices.existing}).toString();
+    url.hash = "";
+    return url.href;
   }
 
-  function currentPlan() {
-    return api.buildPlan(api.validateAnswers(state.answers, state.catalog), state.catalog);
+  function keyInput() {
+    let input = $("key-input");
+    if (!input) {
+      input = el("input", {id: "key-input", type: "password", autocomplete: "off", autocapitalize: "off", spellcheck: "false", maxlength: "2048", "data-lpignore": "true", "data-1p-ignore": "true"});
+      $("key-row").prepend(input);
+    }
+    return input;
   }
 
-  function renderPlan() {
-    let plan;
+  function renderLocal(plan) {
+    const server = state.server;
+    const info = provider(plan);
+    const cloud = info.kind === "cloud";
+    const saved = cloud && server.credentials[plan.provider];
+    $("key-box").hidden = !cloud;
+    if (cloud) {
+      keyInput();
+      $("key-help").href = plan.setup_url;
+      $("key-help").textContent = "Get my " + info.short + " API key";
+      $("key-label").textContent = "Paste your " + info.short + " API key";
+      $("key-form").hidden = saved;
+      $("key-saved").hidden = !saved;
+      $("key-saved-text").textContent = info.short + " key saved on this computer.";
+    }
+    $("ai-box").hidden = !(saved || info.kind === "local");
+    const install = server.install;
+    $("install").disabled = install === "running" || closed();
+    $("launch").disabled = install !== "ready" || closed();
+    $("install").textContent = install === "running" ? "Installing..." : install === "ready" ? "Install again" : "Install selected tools";
+    $("install").className = "button " + (install === "ready" ? "ghost" : "primary");
+    $("launch").className = "button " + (install === "ready" ? "primary" : "ghost");
+    $("install-state").textContent = MESSAGES[{idle: "installIdle", running: "installRunning", ready: "installReady", error: "installError"}[install]];
+    $("install-state").classList.toggle("bad", install === "error");
+  }
+
+  function applyServer(data) {
+    const next = api.readQuickstartState(data, state.catalog);
+    if (!next) throw new Error("bad state");
+    state.server = next;
+    return next;
+  }
+
+  function savedOrDefault() {
+    return (state.server && state.server.choices) || api.validateChoices(state.catalog.defaults, state.catalog);
+  }
+
+  /* Saves choices to the local service. Its answer is authoritative; on failure the display rolls back. */
+  async function commit(next) {
+    state.choices = next;
+    render();
     try {
-      plan = currentPlan();
+      const server = applyServer(await localJson("/api/quickstart/save", {choices: next}));
+      state.choices = server.choices || next;
+      return true;
+    } catch (error) {
+      state.choices = savedOrDefault();
+      status(MESSAGES.save, true);
+      return false;
+    } finally {
+      render();
+    }
+  }
+
+  async function choose() {
+    let next;
+    try {
+      next = api.validateChoices({role: $("role").value, budget: $("budget").value, existing: $("existing").value}, state.catalog);
     } catch (error) {
       status(error.message, true);
+      render();
       return;
     }
-    const included = plan.features.filter((feature) => feature.status === "included");
-    const remaining = plan.tasks.filter((task) => taskState(task)[0] === "manual").length;
-    $("plan-summary").textContent = included.length + " features match your choices. " + remaining + " task" + (remaining === 1 ? "" : "s") + " left to check. Monthly software cost for Jarvis: $0.";
-    const selectable = new Set(state.catalog.features.filter((feature) => feature.selectable).map((feature) => feature.id));
-    $("plan-features").replaceChildren(...plan.features.map((feature) => {
-      const row = el("li", {className: "feature " + feature.status});
-      const head = el("div", {className: "feature-head"});
-      if (selectable.has(feature.id)) {
-        const input = el("input", {type: "checkbox", "aria-label": "Use " + feature.name});
-        input.checked = state.answers.features.includes(feature.id);
-        input.addEventListener("change", () => { setFeature(feature.id, input.checked); state.saved = false; renderPlan(); });
-        head.append(input);
+    notice("");
+    status("");
+    if (!state.local) {
+      state.choices = next;
+      render();
+      return;
+    }
+    if (state.busy || state.server.install === "running") { render(); return; }
+    await act(null, () => commit(next));
+  }
+
+  async function saveKey(event) {
+    event.preventDefault();
+    const input = keyInput();
+    const plan = api.recommend(state.choices, state.catalog);
+    const value = input.value.trim();
+    input.value = "";
+    if (!value) { status(MESSAGES.keyEmpty, true); input.focus(); return; }
+    await act(event.submitter || null, async () => {
+      try {
+        applyServer(await localJson("/api/quickstart/key", {provider: plan.provider, key: value}));
+        status(MESSAGES.keySaved);
+      } catch (error) {
+        status(MESSAGES.key, true);
       }
-      head.append(el("b", {text: feature.name}));
-      const label = feature.status === "included" ? (feature.maturity === "preview" ? "PREVIEW" : "INCLUDED") : feature.status === "unavailable" ? "UNAVAILABLE" : "OFF";
-      head.append(el("span", {className: "tag " + feature.status, text: label}));
-      row.append(head);
-      feature.reasons.concat(feature.notes).forEach((note) => row.append(el("p", {text: note})));
-      return row;
-    }));
-    $("camera-index").value = String(state.answers.preferences.camera_index);
-    $("cursor-reminder").hidden = !included.some((feature) => feature.id === "hand_control");
-    $("hand-cursor").checked = state.answers.preferences.hand_move_cursor;
-    $("cost-notes").replaceChildren(...plan.cost.notes.map((note) => el("li", {text: note})));
-    $("guidance").replaceChildren(...plan.guidance.map((item) => {
-      const li = el("li", {}, [el("b", {text: item.name + ": "}), document.createTextNode(item.text + " ")]);
-      if (item.url) li.append(el("a", {href: item.url, target: "_blank", rel: "noopener noreferrer", text: "Official page"}));
-      return li;
-    }));
-    const chosen = [state.catalog.ai_tools.find((tool) => tool.id === plan.answers.ai_tool), state.catalog.voice_options.find((voice) => voice.id === plan.answers.voice)]
-      .flatMap((item) => [item.id, item.provider]).filter(Boolean);
-    const providers = state.providers ? state.providers.entries.filter((entry) => chosen.includes(entry.id)) : [];
-    $("provider-info").hidden = !providers.length && !(state.providers && state.providers.budgetNote);
-    const items = providers.map((entry) => {
-      const billing = entry.monthly === 0 ? "No software fee." : entry.billing === "usage-based" ? "Billed by usage." : "";
-      const li = el("li", {}, [el("b", {text: (entry.name || entry.id) + ": "}),
-        document.createTextNode([entry.description, entry.creditNote, billing, entry.exampleRate].filter(Boolean).join(" ") + " ")]);
-      entry.links.forEach((item, index) => {
-        if (index) li.append(document.createTextNode(" · "));
-        li.append(el("a", {href: item.url, target: "_blank", rel: "noopener noreferrer", text: item.label}));
-      });
-      return li;
+      input.value = "";
+      render();
     });
-    if (state.providers && state.providers.budgetNote) items.push(el("li", {text: state.providers.budgetNote}));
-    if (state.providers && state.providers.checked) items.push(el("li", {className: "note", text: "Catalog checked on " + state.providers.checked + ". Providers change prices and benefits; their official pages are the source of truth."}));
-    $("provider-list").replaceChildren(...items);
-    $("tasks").replaceChildren(...plan.tasks.map((task) => {
-      const [kind, label] = taskState(task);
-      const li = el("li", {className: "task " + kind}, [el("div", {className: "task-head"}, [el("b", {text: task.title}), el("span", {className: "pill " + kind, text: label})]), el("p", {text: task.detail})]);
-      if (task.command) li.append(el("code", {text: task.command}));
-      if (phone && ["download", "hand_model"].includes(task.id)) li.append(el("p", {className: "note", text: "Open the computer setup link above on your computer to complete this download."}));
-      else if (task.url) li.append(el("a", {href: task.url, target: "_blank", rel: "noopener noreferrer", text: "Official download or page"}));
-      else if (task.id === "download" && !local) li.append(el("p", {className: "note", text: "The release download link will be added here."}));
-      return li;
-    }));
-    $("launch-command").textContent = plan.launch_command;
-    const release = state.catalog.release.download_url;
-    $("release-link").hidden = local || phone || !release;
-    if (release) { $("release-link").href = release; $("release-link").rel = "noopener noreferrer"; }
-    $("apply").hidden = !local;
-    $("dashboard-link").hidden = !local || !state.saved;
-    $("exit-plan").hidden = !(local && state.diagnostics && state.diagnostics.can_exit);
   }
 
-  function download() {
-    let plan;
-    try { plan = currentPlan(); } catch (error) { status(error.message, true); return; }
-    const url = URL.createObjectURL(new Blob([JSON.stringify(plan, null, 2) + "\n"], {type: "application/json"}));
-    const link = el("a", {href: url, download: "jarvis-setup-plan.json"});
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    status("Plan downloaded. It contains your answers only, no secrets.");
+  function needConsent() {
+    if ($("consent").checked) return false;
+    status(MESSAGES.consent, true);
+    $("consent").focus();
+    return true;
   }
 
-  async function importPlan(file) {
-    try {
-      if (file.size > 16384) throw new Error("That file is too large to be a Jarvis plan");
-      state.answers = api.importedAnswers(await file.text(), state.catalog);
-      state.saved = false;
-      renderPurpose();
-      renderChoices();
-      show(state.answers.install ? "plan" : "declined");
-      status("Plan imported. Nothing was armed or turned on.");
-    } catch (error) {
-      status("Could not import that plan. Choose a valid Jarvis plan JSON file under 16 KB.", true);
-    }
+  async function pollInstall() {
+    if (state.server.install !== "running" || state.polls > 600) return;
+    state.polls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try { applyServer(await localJson("/api/quickstart")); } catch (error) { state.server.install = "error"; }
+    render();
+    pollInstall();
   }
 
-  async function apply() {
-    try {
-      const result = await localJson("api/setup/apply", {answers: api.validateAnswers(state.answers, state.catalog)});
-      state.saved = true;
-      state.diagnostics = await localJson("api/setup/diagnostics");
-      renderPlan();
-      status("Saved to " + result.path + ". Nothing was armed. Use the launch command when you are ready.");
-    } catch (error) {
-      status("Not saved: " + error.message, true);
-    }
-  }
-
-  async function exit() {
-    try {
-      await localJson("api/setup/exit", {});
-      document.querySelectorAll("button, input, select").forEach((control) => { control.disabled = true; });
-      const message = "Jarvis stopped. Nothing is running in the background. You can close this page.";
-      if (state.step === "declined") $("exit-note").textContent = message; else status(message);
-    } catch (error) {
-      const message = "Could not stop Jarvis: " + error.message + ". Close the Jarvis window or press Ctrl+C in it.";
-      if (state.step === "declined") $("exit-note").textContent = message; else status(message, true);
-    }
-  }
-
-  /* Optional read-aloud: only on-device voices (localService), only after a click. No cloud speech, no microphone. */
-  function speak() {
-    const note = $("speak-note");
-    const synth = window.speechSynthesis;
-    if (synth.speaking) { synth.cancel(); note.textContent = ""; return; }
-    const voices = synth.getVoices().filter((voice) => voice.localService);
-    if (!voices.length) { note.textContent = "No on-device voice found. The text stays on screen."; return; }
-    const section = document.querySelector('.step:not([hidden])');
-    const parts = [section.querySelector("h1"), section.querySelector(".lead")].filter(Boolean).map((node) => node.textContent);
-    const utterance = new SpeechSynthesisUtterance(parts.join(". "));
-    const lang = (navigator.language || "en").slice(0, 2);
-    utterance.voice = voices.find((voice) => voice.lang.startsWith(lang)) || voices[0];
-    utterance.onend = () => { note.textContent = ""; };
-    note.textContent = "Reading with an on-device voice. Click again to stop.";
-    synth.speak(utterance);
-  }
-
-  function next() {
-    if (state.step === "purpose" && state.answers.preset === "custom" && !state.answers.features.length) {
-      $("custom-features").classList.add("warn");
-      $("custom-list").querySelector("input").focus();
-      return;
-    }
-    show(STEPS[Math.min(STEPS.length - 1, STEPS.indexOf(state.step) + 1)]);
-  }
+  const actions = {
+    async "key-delete"(button) {
+      const plan = api.recommend(state.choices, state.catalog);
+      try {
+        applyServer(await localJson("/api/quickstart/key/delete", {provider: plan.provider}));
+        status(MESSAGES.keyDeleted);
+      } catch (error) { status(MESSAGES.keyDelete, true); }
+      render();
+    },
+    async test() {
+      if (needConsent()) return;
+      const plan = api.recommend(state.choices, state.catalog);
+      try {
+        await localJson("/api/quickstart/test", {provider: plan.provider, consent: true});
+        status(MESSAGES.tested);
+      } catch (error) { status(MESSAGES.test, true); }
+    },
+    async chat() {
+      if (needConsent()) return;
+      const prompt = $("prompt").value.trim();
+      if (!prompt) { status(MESSAGES.promptEmpty, true); $("prompt").focus(); return; }
+      const plan = api.recommend(state.choices, state.catalog);
+      try {
+        const result = await localJson("/api/quickstart/chat", {provider: plan.provider, prompt, consent: true});
+        if (typeof result.reply !== "string") throw new Error("bad reply");
+        $("reply").textContent = result.reply.slice(0, 4000);
+        $("reply").hidden = false;
+        status("");
+      } catch (error) {
+        $("reply").hidden = true;
+        status(MESSAGES.chat, true);
+      }
+    },
+    async install() {
+      if (!(await commit(state.choices))) return;
+      try {
+        applyServer(await localJson("/api/quickstart/install", {consent: true}));
+        status("");
+      } catch (error) { status(MESSAGES.install, true); }
+      render();
+      state.polls = 0;
+      pollInstall();
+    },
+    async launch() {
+      if (state.server.install !== "ready") { status(MESSAGES.launchWait, true); return; }
+      try {
+        const result = await localJson("/api/quickstart/launch", {consent: true});
+        if (!api.isSafeLaunchUrl(result.url)) throw new Error("unexpected address");
+        location.assign(result.url);
+      } catch (error) { status(MESSAGES.launch, true); }
+    },
+    async exit() {
+      try {
+        await localJson("/api/setup/exit", {});
+        document.body.classList.add("closed");
+        document.querySelectorAll("button, input, select, textarea").forEach((control) => { control.disabled = true; });
+        status(MESSAGES.exited);
+      } catch (error) { status(MESSAGES.exit, true); }
+    },
+    async "import-choices"() {
+      $("import-choices").click();
+    },
+    async "copy-link"() {
+      const text = $("handoff-link").textContent;
+      try {
+        if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") throw new Error("no clipboard");
+        await navigator.clipboard.writeText(text);
+        status(MESSAGES.copied);
+      } catch (error) { status(MESSAGES.copyFailed, true); }
+    },
+    async "save-json"() {
+      const body = JSON.stringify({schema: api.CHOICES_SCHEMA, choices: state.choices}, null, 2) + "\n";
+      const url = URL.createObjectURL(new Blob([body], {type: "application/json"}));
+      const link = el("a", {href: url, download: "jarvis-choices.json"});
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status(MESSAGES.savedJson);
+    },
+  };
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
-    if (!button) return;
-    const action = button.dataset.action;
-    if (action === "install-yes") { state.answers.install = true; show("purpose"); }
-    else if (action === "install-no") { state.answers.install = false; $("exit-local").hidden = !(local && state.diagnostics && state.diagnostics.can_exit); show("declined"); }
-    else if (action === "restart") { state.answers = api.defaultAnswers(state.catalog); renderPurpose(); renderChoices(); show("welcome"); }
-    else if (action === "next") next();
-    else if (action === "back") show(STEPS[Math.max(0, STEPS.indexOf(state.step) - 1)]);
-    else if (action === "download") download();
-    else if (action === "apply") apply();
-    else if (action === "exit") exit();
-    else if (action === "speak") speak();
-    else if (action === "copy-setup") copyText($("setup-address").textContent, "Computer setup link copied. Save the plan separately to keep your choices.", "Select the computer setup address above and copy it.");
-    else if (action === "copy") copyText($("launch-command").textContent, "Command copied.", "Select the command and copy it yourself.");
+    if (!button || !state.choices || !own(actions, button.dataset.action)) return;
+    act(button, () => actions[button.dataset.action](button));
   });
-  document.addEventListener("change", (event) => {
-    const target = event.target;
-    if (target.name === "preset") {
-      state.answers.preset = target.value;
-      const preset = state.catalog.presets.find((item) => item.id === target.value);
-      state.answers.features = preset.features.slice();
-      if (target.value === "creator" && state.answers.voice === "no_microphone" && state.answers.device.microphone) state.answers.voice = "offline_vosk";
-      renderPurpose();
-    } else if (target.name === "voice") {
-      state.answers.voice = target.value;
-      if (target.value === "offline_vosk") state.answers.device.microphone = true;
-      renderChoices();
-    } else if (target.id === "ai-tool") {
-      state.answers.ai_tool = target.value;
-      renderChoices();
-    } else if (target.id === "device-os") state.answers.device.os = target.value;
-    else if (target.id === "device-ram") state.answers.device.ram = target.value;
-    else if (target.id === "camera-index") {
-      const value = Number(target.value);
-      state.answers.preferences.camera_index = Number.isInteger(value) && value >= 0 && value <= 9 ? value : 0;
-      state.saved = false;
-      renderPlan();
-    } else if (target.id === "hand-cursor") {
-      state.answers.preferences.hand_move_cursor = target.checked;
-      state.saved = false;
-      renderPlan();
-    } else if (target.id === "import" && target.files.length) {
-      importPlan(target.files[0]);
-      target.value = "";
-    }
+  $("choices").addEventListener("change", choose);
+  $("choices").addEventListener("submit", (event) => event.preventDefault());
+  $("key-form").addEventListener("submit", saveKey);
+  $("import-choices").addEventListener("change", () => {
+    const input = $("import-choices");
+    const file = input.files && input.files[0];
+    if (!file || !state.local || !state.choices) { input.value = ""; return; }
+    act(null, async () => {
+      let next;
+      try {
+        if (file.size > api.IMPORT_LIMIT) throw new Error("too large");
+        next = api.importedChoices(await file.text(), state.catalog);
+      } catch (error) {
+        status(MESSAGES.importBad, true);
+        return;
+      } finally {
+        input.value = "";
+      }
+      if (await commit(next)) status(MESSAGES.imported);
+    });
   });
-  function setBudget(raw, source) {
-    const value = Number(raw);
-    if (!Number.isFinite(value)) return;
-    state.answers.budget_usd = Math.min(500, Math.max(0, Math.floor(value * 100 + 0.5) / 100));
-    if (source !== "range") $("budget-range").value = String(Math.round(state.answers.budget_usd / 5) * 5);
-    if (source !== "number") $("budget-number").value = String(state.answers.budget_usd);
+  function own(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
+
+  function links(release) {
+    $("feedback").href = release.feedback;
+    $("source-repo").href = release.source_repo;
+    $("source-zip").href = release.source_zip;
+    document.querySelectorAll(".agent-guide").forEach((link) => { link.href = release.agent_guide; });
+    const ready = release.status === "available";
+    $("download").hidden = !ready;
+    $("download-pending").hidden = ready;
+    if (ready) $("download").href = release.windows_zip;
+    $("download-note").textContent = ready ? "Unzip it, then open Start-Jarvis-Windows.cmd." : "The first Windows package is still being prepared. Until then, the source ZIP below runs with Python 3.11 or newer through Start-Jarvis.cmd.";
   }
-  $("budget-range").addEventListener("input", (event) => setBudget(event.target.value, "range"));
-  $("budget-number").addEventListener("input", (event) => setBudget(event.target.value, "number"));
 
   async function start() {
-    $("mode-badge").textContent = local ? "ON THIS COMPUTER" : "PLANNER ONLY";
-    $("desktop-handoff").hidden = local;
-    $("setup-address").textContent = new URL("setup.html", location.href).href;
-    $("speak").hidden = !("speechSynthesis" in window && "SpeechSynthesisUtterance" in window);
     try {
-      const response = await fetch("setup-catalog.json", {cache: "no-store"});
+      const response = await fetch("quickstart-catalog.json", {cache: "no-store"});
       if (!response.ok) throw new Error("catalog unavailable");
       state.catalog = await response.json();
+      if (state.catalog.schema !== api.QUICKSTART_SCHEMA) throw new Error("catalog schema");
+      fillSelect("role", state.catalog.roles);
+      fillSelect("budget", state.catalog.budgets);
+      fillSelect("existing", state.catalog.existing);
+      state.choices = api.validateChoices(state.catalog.defaults, state.catalog);
+      links(state.catalog.release);
     } catch (error) {
       $("mode-badge").textContent = "UNAVAILABLE";
-      $("wizard").prepend(el("p", {className: "card bad", text: "The setup catalog could not load. Open this page through a web server or with Start-Jarvis.cmd."}));
+      $("choices").hidden = true;
+      notice(MESSAGES.catalog);
       return;
     }
-    state.answers = api.defaultAnswers(state.catalog);
-    const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
-    const mobilePlanner = api.isMobilePlanner(navigator);
-    if (!mobilePlanner && /mac/i.test(platform)) state.answers.device.os = "macos";
-    else if (!mobilePlanner && /linux|x11/i.test(platform)) state.answers.device.os = "linux";
-    try {
-      const response = await fetch("provider-catalog.json", {cache: "no-store"});
-      if (response.ok) state.providers = api.readProviderCatalog(await response.json(), state.catalog);
-    } catch (error) {
-      state.providers = null;
-    }
-    if (local) {
+    if (api.isLoopbackPage(location, forced)) {
       try {
-        state.token = (await localJson("api/session")).token;
-        state.diagnostics = await localJson("api/setup/diagnostics");
-        if (["windows", "macos", "linux"].includes(state.diagnostics.os)) state.answers.device.os = state.diagnostics.os;
-        $("device-detected").textContent = "Detected " + state.diagnostics.os + " with Python " + state.diagnostics.python + ".";
-        const saved = (await localJson("api/setup/config")).answers;
-        if (saved) { state.answers = saved; state.answers.install = true; state.saved = true; }
+        const session = await localJson("/api/session");
+        if (!session || typeof session.token !== "string" || !session.token) throw new Error("no session");
+        state.token = session.token;
+        const server = api.readQuickstartState(await localJson("/api/quickstart"), state.catalog);
+        if (!server) throw new Error("not local");
+        state.local = true;
+        state.server = server;
+        if (server.choices) state.choices = server.choices;
       } catch (error) {
-        $("mode-badge").textContent = "LOCAL SESSION UNAVAILABLE";
+        state.local = false;
+        state.token = "";
+        notice(MESSAGES.local);
+      }
+    } else {
+      try {
+        const linked = api.choicesFromQuery(location.search, state.catalog);
+        if (linked) state.choices = linked;
+      } catch (error) {
+        notice(MESSAGES.query);
       }
     }
-    renderPurpose();
-    renderChoices();
-    show("welcome");
+    state.phone = !state.local && api.isMobilePlanner(navigator);
+    $("mode-badge").textContent = state.local ? "ON THIS COMPUTER" : state.phone ? "PHONE PLANNER" : "PLANNER";
+    $("local").hidden = !state.local;
+    $("get").hidden = state.local || state.phone;
+    $("phone").hidden = !state.phone;
+    $("privacy-link").hidden = state.local;
+    render();
+    if (state.local && state.server.install === "running") pollInstall();
   }
   start();
 }

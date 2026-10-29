@@ -1,5 +1,7 @@
 # Build your own dashboard
 
+For the beginner Windows download, use **Jarvis-Windows.zip** and **Start-Jarvis-Windows.cmd**. Python and device packages are included. Choose the three dropdowns, then **Install selected tools** and **Open dashboard**. This guide also covers the source edition and manual calibration; its `.venv` commands apply to a source checkout. For the portable edition, use its `runtime\python.exe` from the outer `Jarvis-Windows` folder instead.
+
 ## 1. Try the safe demo
 
 Install [Python 3.11 or newer](https://www.python.org/downloads/), unzip Jarvis, and double-click **Start-Jarvis.cmd** on Windows. If Python is missing, the window explains what to install. On macOS or Linux, run `python3 -m jarvis.launcher` from the unzipped folder.
@@ -20,7 +22,7 @@ On Windows, double-click **Install-Optional-Tools.cmd**:
 
 Read the package list, then enter `y` to confirm. Installation uses this project's `.venv` directory. It downloads packages from PyPI and, for hand control, the fixed official Google model. It never opens devices. Existing environments and model files are preserved when setup cannot safely continue.
 
-Reopen **Start-Jarvis.cmd** after installation. It prefers `.venv` automatically and returns to the safe wizard. Live features use the separate command shown in your plan.
+Reopen **Start-Jarvis.cmd** after a source installation. It prefers `.venv` automatically and returns to setup. **Open dashboard** starts the selected feature idle. The commands below let you choose manual observation-only settings for calibration.
 
 On macOS or Linux, use the same menu with `python3 -m jarvis.install_tools`. This creates `.venv` too; portable live commands start with `./.venv/bin/python`. Windows examples below use the project's `.venv` interpreter directly.
 

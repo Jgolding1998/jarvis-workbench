@@ -37,15 +37,15 @@ On Windows, an Esc watcher polls `GetAsyncKeyState` only while hand control runs
 
 ## Setup wizard boundary
 
-`web/setup.html`, `setup.js`, `setup.css`, and `setup-catalog.json` are a standalone static wizard. The planner is deterministic and implemented twice, in `setup.js` and `jarvis/planner.py`; a test runs both over a large set of answers and requires identical plans. In hosted mode (`<meta name="jarvis-mode" content="hosted">`, or any address other than `127.0.0.1`) the page fetches only the two catalog files beside it and never calls a local address.
+`web/setup.html`, `setup.js`, `setup.css`, and `quickstart-catalog.json` provide the three-dropdown setup. `jarvis/quickstart.py` mirrors the browser recommendation and parity tests compare every valid combination. Hosted mode fetches static assets beside the page and never calls a loopback address or collects an API key.
 
-On the local server the wizard adds read-only diagnostics (Python version, operating system, whether optional packages and a voice model are present, using `importlib.util.find_spec` without importing them) and an apply route. Apply requires the session token, accepts at most 8 KiB, rejects duplicate keys, non-finite numbers, unknown or prototype-named fields, and any value outside fixed lists. It writes `runtime/setup-config.json` atomically with a temporary file and `os.replace`. The saved file holds only the answers. Nothing reads it to arm actions, open devices, or build shell commands; launch commands are assembled from fixed tokens. The exit route stops the local server when the user declines setup or chooses **Stop Jarvis**.
+Local setup adds write-only key storage, explicit package installation, and a desktop launch route. `jarvis/onboarding.py` saves only the three choices in `runtime/quickstart.json` using atomic replacement. The installer has one background job; consent is required and choices cannot change during installation. Complete portable packages use their included dependencies. Source installations use the existing reviewed package installer and a project `.venv`. A fixed subprocess command opens the selected desktop feature idle. Its arguments never come from arbitrary user text. Legacy planner endpoints remain validated for existing clients.
 
-`Start-Jarvis.cmd` looks for Python 3.11 or newer and runs `python -m jarvis.launcher`. It does not install software, change PowerShell policy, request administrator rights, or download anything.
+`Start-Jarvis.cmd` finds Python 3.11 or newer for source installations. `Start-Jarvis-Windows.cmd` uses the portable package's isolated Python runtime. Both open safe setup through `jarvis.launcher`; neither elevates privileges or enables devices.
 
 ## Request boundary
 
-The server binds to IPv4 loopback only. It accepts an exact `127.0.0.1:<port>` Host header and rejects a foreign Origin. Mutations require a fresh per-process session token, a JSON content type, and a body no larger than 2 KiB. There are no CORS grants, arbitrary file routes, command execution endpoints, credential endpoints, telemetry, or cloud services.
+The server binds to IPv4 loopback only. It accepts an exact `127.0.0.1:<port>` Host header and rejects a foreign Origin. Mutations require a fresh per-process session token and JSON content type. Bodies are bounded at 2 KiB for desktop actions, 8 KiB for the legacy planner, and 20,000 bytes for the quick setup's bounded chat and key fields. Parsing rejects duplicate keys, non-finite numbers, excessive nesting, and unknown fields. There are no CORS grants, arbitrary file routes, shell command endpoints, or telemetry.
 
 The browser receives only state and bounded event messages. A restrictive Content Security Policy blocks external scripts, framing, and external connections. UI text uses `textContent`. Requests and session tokens are not logged.
 
@@ -53,9 +53,11 @@ This boundary protects against an unrelated website trying to operate the local 
 
 ## Data lifecycle
 
-Camera frames and microphone blocks exist in process memory and are discarded. No screenshots, audio files, face embeddings, names, API keys, or user profiles are saved. The activity list holds the most recent 40 generic events in memory and resets on restart. Only an explicitly enabled workbook action writes a file, under the ignored `runtime/` directory.
+Camera frames and microphone blocks exist in memory and are discarded. The activity list holds the most recent 40 generic events and resets on restart. Choices and an explicitly enabled synthetic workbook use the ignored `runtime/` directory. API keys use the current user's Windows Credential Manager, with no plaintext file fallback. The public site has no credential fields.
 
-Optional dependencies and downloaded voice models must be assessed independently. They are not included in the dependency-free demo or its security claims. The included HOG model is an estimate with substantial false-positive and false-negative risk.
+AI requests form a separate text-only path. `provider_client.py` pins provider URLs and models, refuses redirects and proxy overrides, and bounds DNS work, response size, and total request time. `onboarding.py` permits one request at a time and requires explicit consent. No model output is parsed as a command or passed to `Actions`. The selected provider receives only the submitted prompt, without frames, files, or desktop state.
+
+The source simulator uses only the standard library. The portable edition includes pinned third-party device packages and a verified hand model, with retained license notices; no Vosk voice model is included. The HOG people detector has substantial false-positive and false-negative risk.
 
 ## Verification scope
 

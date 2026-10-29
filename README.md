@@ -1,37 +1,28 @@
 # Jarvis Workbench
 
-A small local workstation assistant with a guided setup, explicit action permissions, and a testable presence policy. It runs on your own computer, costs $0, and needs no account or API key.
+A local workstation assistant with hand gestures, a presence guard, and optional AI chat. Setup recommends a starting point from three choices: what you do, your monthly budget, and the tools you already have.
 
-[Guided setup and gesture practice](https://jarvis-workbench.jrgoldin.chatgpt.site) / [Download the Python source package](https://github.com/Jgolding1998/jarvis-workbench/releases/latest/download/Get-Jarvis-Workbench.zip)
+[Guided setup and gesture practice](https://jarvis-workbench.jrgoldin.chatgpt.site) / [Releases and downloads](https://github.com/Jgolding1998/jarvis-workbench/releases/latest) / [Install with your AI agent](docs/INSTALL_WITH_AGENT.md)
 
 ![Safe demo dashboard](docs/dashboard.png)
 
 ## Get started
 
-You need [Python 3.11 or newer](https://www.python.org/downloads/). The download is a source package that runs with Python, not a standalone app.
+**Windows x64:** download **Jarvis-Windows.zip** and its checksum from the same release, verify SHA-256, and extract the folder. Double-click **Start-Jarvis-Windows.cmd**. Python, the device packages, and the hand model are included. No administrator account is needed.
 
-**Windows:** unzip the download, then double-click **Start-Jarvis.cmd**. If Python is missing, the window shows the official download link and changes nothing.
+Choose your role, monthly budget, and existing tool from the three dropdowns. Review the recommendation, then choose **Install selected tools**. In the portable edition this checks the included dependencies. The source edition installs them into the project's `.venv`. **Open dashboard** starts the selected Windows feature idle, with real actions disarmed.
 
-**macOS or Linux:** open a terminal in the unzipped folder and run:
+AI chat is optional. If you choose a cloud provider, create your own API key on its official website and enter it in the local app. It is kept in Windows Credential Manager. The public website never asks for a key. Testing a connection sends one short request only after you confirm it and may use your provider credits.
+
+**From source:** install [Python 3.11 or newer](https://www.python.org/downloads/), extract **Get-Jarvis-Workbench.zip**, and run **Start-Jarvis.cmd** on Windows. On macOS or Linux, open a terminal in the source folder and run:
 
 ```
 python3 -m jarvis.launcher
 ```
 
-The launcher starts Jarvis in safe demo mode and opens the setup wizard in your browser. The wizard asks:
+The launcher opens setup in safe simulation mode. Saving choices, installing dependencies, and adding an API key do not open a camera or microphone, move the cursor, or arm Windows actions. Other operating systems can use the browser simulator; the beginner desktop installation targets Windows x64.
 
-1. Whether you want to set up Jarvis at all. **No thanks** opens a screen where you can close the page or choose **Stop Jarvis** to end the local session.
-2. What you will use it for: Developer, Office work, Study, Creator, Desk privacy, or Custom.
-3. The most you would spend each month, from $0 to $500. This is a ceiling, not a target.
-4. Which AI tool you already use, if any.
-5. How you want to use your voice.
-6. Your operating system, camera, microphone, and memory.
-
-You then get a plan: which features will work on your computer and why others will not, the exact tasks left, which ones you do and which one Jarvis does, the launch command, and cost guidance. Choose **Apply and save preferences** to write `runtime/setup-config.json`. Saving or importing a plan never turns on the camera, microphone, mouse, or Windows actions.
-
-You can also download the plan as JSON and import it later. The same wizard works as a static web page with no local server; in that mode it only builds and downloads plans.
-
-On a phone, use the guide and practice area, then save the plan JSON. Open the computer setup link on your computer to download Jarvis, and import your plan in its local wizard. The ZIP contains Python desktop software; it does not install an iPhone or Android app.
+A phone can use the guide and virtual gesture practice, then save the choices for a computer. This ZIP cannot install an iPhone or Android app. The phone website cannot operate a computer's camera, mouse, or lock screen.
 
 ## Add optional tools on Windows
 
@@ -42,7 +33,7 @@ Double-click **Install-Optional-Tools.cmd**, choose a menu item, and confirm the
 3. **Offline voice** for local recognition. A Vosk voice model is a separate manual download.
 4. **All optional tools** for all three.
 
-The tool uses this project's `.venv` folder. It installs packages and models without opening a camera, microphone, or mouse control. Then reopen **Start-Jarvis.cmd**, which uses that environment automatically. The launcher still opens a safe demo; your saved plan shows the separate command for live features. On macOS or Linux, use `python3 -m jarvis.install_tools` instead.
+This menu is for source installations. It uses the project's `.venv` folder and leaves devices off. Then reopen **Start-Jarvis.cmd**, which uses that environment automatically. The portable download already contains these packages; do not run pip inside its embedded Python. On macOS or Linux, use `python3 -m jarvis.install_tools` for the source menu.
 
 For the voice model and live launch examples, follow the [setup guide](docs/BUILD_YOUR_OWN.md).
 
@@ -58,15 +49,18 @@ For the voice model and live launch examples, follow the [setup guide](docs/BUIL
 | Offline voice activation (Vosk) | Implemented | Windows, microphone, voice packages, a downloaded model | $0 |
 | Hand control practice (virtual cursor, clap to stop) | Implemented | Python | $0 |
 | Local hand tracking with optional real cursor | Implemented, experimental | Windows, camera, hand packages and model | $0 |
-| Setup wizard read-aloud | Implemented, optional | A browser voice that runs on your device | $0 |
-| ChatGPT, Claude, OpenAI API, Anthropic API, Ollama | Guidance only, no connector | Your own account if you use them | Set by the provider |
+| AI text chat: NVIDIA, OpenAI, Anthropic, Ollama | Implemented, optional | Your own cloud API key or local Ollama model | Set by the provider or your hardware |
 | ElevenLabs or your computer's built-in voice tools | Guidance only, no connector | Your own account or system settings | Set by the provider |
 
-Jarvis has no language model and never asks for an API key. The wizard is a deterministic planner: the same answers always give the same plan.
+The recommendation is deterministic: the same choices give the same plan. AI replies are text only. They cannot run commands, inspect files, change permissions, or operate the desktop.
 
 ## Planning costs
 
-Every implemented feature costs $0 per month. Your monthly amount in the wizard is a planning ceiling: a higher number never adds features or recommends a purchase. If you already pay for an AI subscription or API, it is billed by that provider and Jarvis does not use it. Some subscription plans include API credits or other benefits; check the provider's official page for your eligibility. If you use a paid API on its own, set a spending limit in the provider's console. Prices change, so the wizard links to official pricing pages instead of quoting them.
+The app has its own dashboard. It does not include the movie character's voice, startup music, a weather service, or an always-listening "Jarvis" wake word. Offline voice is a separate setup for the specific commands described below; downloading the app does not turn on a microphone.
+
+The local dashboard, presence guard, hand control, and offline voice have no subscription charge. At a $0 budget, setup suggests NVIDIA's no-cost evaluation access or an existing local Ollama installation. NVIDIA availability and limits depend on your account and the model; rate limits and busy periods can cause waiting. Local models use your hardware, memory, electricity, and disk space. Free does not always mean slower.
+
+Cloud APIs can charge for requests. The monthly dropdown is a planning preference, not an enforced billing limit. Set limits with the provider. Some chat subscriptions offer eligible API credits or other benefits; check your account rather than assuming a subscription includes API access. Jarvis does not purchase credits, create keys, or promise a fixed monthly bill.
 
 ## Use the dashboard
 
@@ -119,4 +113,8 @@ If the camera cannot open or its reader fails, restart the process after resolvi
 
 ## References
 
-The implementation uses documented interfaces from [OpenCV](https://docs.opencv.org/4.x/d5/d33/structcv_1_1HOGDescriptor.html), [Vosk](https://alphacephei.com/vosk/install), and Microsoft's [LockWorkStation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation) and [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate) APIs. Their software and models have their own licenses. No third-party assistant source, model weights, or account configuration is bundled. This project is released under the [MIT License](LICENSE).
+The implementation uses documented interfaces from [OpenCV](https://docs.opencv.org/4.x/d5/d33/structcv_1_1HOGDescriptor.html), [Vosk](https://alphacephei.com/vosk/install), and Microsoft's [LockWorkStation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation) and [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate) APIs. The Windows package includes third-party dependencies and the official hand model with their license notices. No account credentials are included. This project's own code uses the [MIT License](LICENSE).
+
+## Feedback
+
+[Suggest an improvement or report a problem](https://github.com/Jgolding1998/Jgolding1998/issues/new?template=feedback.yml). The board is public. Use synthetic examples and leave out keys, personal information, and private documents. Follow [SECURITY.md](SECURITY.md) for security reports.
