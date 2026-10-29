@@ -324,12 +324,12 @@
     "camera": {
       "name": "Presence lock",
       "note": "The presence lock uses your webcam to ask Windows to lock when you leave. Keep Windows auto-lock on as well.",
-      "step": "Choose Install selected tools to download the camera pieces. The camera stays off."
+      "step": "The Windows download includes the camera tools. If setup asks you to install them, choose Install selected tools. The camera stays off."
     },
     "hand": {
       "name": "Hand control",
-      "note": "Hand control needs a webcam and a one-time hand tracking download. Accuracy depends on your camera and lighting.",
-      "step": "Choose Install selected tools to download hand tracking. The camera and pointer stay off."
+      "note": "Hand control needs a webcam. The Windows download includes hand tracking; source setups download it once. Accuracy depends on your camera and lighting.",
+      "step": "The Windows download includes hand tracking. If setup asks you to install it, choose Install selected tools. The camera and pointer stay off."
     }
   },
   "notes": {

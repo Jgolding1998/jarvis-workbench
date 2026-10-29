@@ -54,7 +54,7 @@ function findBrowser() {
 const mock = {requests: [], routes: {}, state: null};
 function freshState(overrides) {
   return Object.assign({local: true, choices: null, plan: null, credentials: {nvidia: false, openai: false, anthropic: false},
-    install: {state: "idle", message: LEAK}, providers: []}, overrides || {});
+    install: {state: "idle", message: LEAK}, providers: [], read_aloud_allowed: true}, overrides || {});
 }
 /* Strict defaults that behave like the real service: choices must validate, changes are refused
    while an install runs, install needs saved choices, and overlapping saves are counted. */
@@ -840,6 +840,87 @@ async function localBudget() {
   mock.routes = {};
 }
 
+async function localBundledPackage() {
+  // A complete portable package: no install step, one clear next action, and opening still needs a click.
+  const choices = full({role: "office", budget: 0, existing: "none"});
+  mock.routes = {};
+  mock.requests = [];
+  mock.state = freshState({choices, install: {state: "ready", message: LEAK, included: true}});
+  await open("/setup");
+  await waitFor("document.getElementById('mode-badge').textContent === 'ON THIS COMPUTER'", "bundled local badge");
+  await waitFor("!document.getElementById('local').hidden", "bundled local controls");
+  check(!(await visible("install")), "no redundant install button for a complete package");
+  equal(await text("install-state"), MESSAGES.installIncluded, "package says nothing needs installing");
+  equal(await evaluate("[document.getElementById('launch').disabled, document.getElementById('launch').className]"), [false, "button primary"], "Open dashboard is the one next action");
+  equal(mock.requests.filter((r) => r.method === "POST").length, 0, "nothing is installed, launched or saved on load");
+  route("POST /api/quickstart/launch", (req, res) => json(res, 200, {url: origin + "/"}));
+  await click('[data-action="launch"]');
+  await waitFor("location.pathname === '/' && document.getElementById('dash') !== null", "bundled launch navigation");
+  equal(last("/api/quickstart/launch").body, {consent: true}, "opening still sends the explicit click consent");
+  equal(mock.requests.filter((r) => r.path === "/api/quickstart/install").length, 0, "install never requested for a complete package");
+
+  // "included" is believed only together with a ready state; otherwise the normal install step stays.
+  for (const install of [{state: "idle", message: LEAK, included: true}, {state: "ready", message: LEAK, included: "true"}, {state: "ready", message: LEAK}]) {
+    mock.routes = {};
+    mock.state = freshState({choices, install});
+    await open("/setup");
+    await waitFor("!document.getElementById('local').hidden", "local controls " + JSON.stringify(install));
+    check(await visible("install"), "install step kept " + JSON.stringify(install));
+    check((await text("install-state")) !== MESSAGES.installIncluded, "no included claim " + JSON.stringify(install));
+  }
+  mock.routes = {};
+}
+
+async function localReadAloudGuard() {
+  // The service runs offline voice commands: spoken replies could be heard as commands, so read-aloud is refused.
+  const choices = full({role: "office", budget: 0, existing: "ollama", reply: "read_aloud"});
+  const reply = "To start the guard, say active.";
+  mock.routes = {"POST /api/quickstart/chat": (req, res) => json(res, 200, {reply})};
+  for (const value of [false, undefined, "true", 1]) {
+    mock.state = freshState({choices, read_aloud_allowed: value});
+    await open("/setup");
+    await waitFor("document.getElementById('mode-badge').textContent === 'ON THIS COMPUTER'", "local badge " + String(value));
+    await waitFor("!document.getElementById('ai-box').hidden", "chat offered " + String(value));
+    check(await visible("speak-row"), "read-aloud row still explains itself when refused " + String(value));
+    equal(await evaluate("[document.getElementById('speak').disabled, document.getElementById('speak').checked]"), [true, false], "read-aloud box disabled " + String(value));
+    equal(await text("speak-off"), MESSAGES.readAloudOff, "refusal explained " + String(value));
+    await evaluate("document.getElementById('consent').checked = true; document.getElementById('prompt').value = 'Hello'; document.getElementById('speak').checked = true; true");
+    const asked = mock.requests.filter((r) => r.path === "/api/quickstart/chat").length;
+    await click('[data-action="chat"]');
+    await waitFor("!document.getElementById('chat-reply').hidden", "typed reply shown " + String(value));
+    equal(await text("chat-reply"), reply, "reply stays as text " + String(value));
+    equal(mock.requests.filter((r) => r.path === "/api/quickstart/chat").length, asked + 1, "typed question still sent " + String(value));
+    equal(await evaluate("[window.__speech.spoken.length, document.getElementById('speak').checked, document.getElementById('stop-speaking').hidden]"), [0, false, true], "forced tick still speaks nothing " + String(value));
+  }
+
+  // Allowed, speaking, then a fetched snapshot refuses: speech is cancelled and does not start again.
+  mock.state = freshState({choices});
+  await open("/setup");
+  await waitFor("!document.getElementById('ai-box').hidden", "chat offered when allowed");
+  check(!(await visible("speak-off")), "no refusal note when allowed");
+  await evaluate("document.getElementById('consent').checked = true; document.getElementById('prompt').value = 'Hello'; true");
+  await click("#speak");
+  await click('[data-action="chat"]');
+  await waitFor("window.__speech.spoken.length === 1", "allowed reply spoken");
+  check(await visible("stop-speaking"), "Stop shown while speaking");
+  mock.state = freshState({choices, read_aloud_allowed: false});
+  const cancels = await evaluate("window.__speech.cancels");
+  route("POST /api/quickstart/test", (req, res) => json(res, 200, {ok: true}));
+  await click('[data-action="test"]');
+  await waitFor("document.getElementById('speak').disabled", "refusing snapshot applied");
+  check((await evaluate("window.__speech.cancels")) > cancels, "refusing snapshot cancels speech in progress");
+  equal(await evaluate("[document.getElementById('speak').checked, document.getElementById('stop-speaking').hidden]"), [false, true], "box cleared and Stop hidden");
+  equal(await text("speak-off"), MESSAGES.readAloudOff, "refusal explained after update");
+  const quickstartReads = () => mock.requests.filter((r) => r.method === "GET" && r.path === "/api/quickstart").length;
+  const reads = quickstartReads();
+  await click('[data-action="chat"]');
+  for (let i = 0; i < 250 && quickstartReads() === reads; i += 1) await sleep(20);
+  check(quickstartReads() > reads, "chat finished and refreshed");
+  equal(await evaluate("window.__speech.spoken.length"), 1, "no speech after the refusing snapshot");
+  equal(await evaluate("window.__speech.mic"), 0, "microphone never requested");
+  mock.routes = {};
+}
+
 async function localVariants() {
   // Saved choices from the service restore; a local provider hides the key field.
   mock.routes = {};
@@ -952,6 +1033,8 @@ async function main() {
     await localRegressions();
     await localBudget();
     await localVariants();
+    await localReadAloudGuard();
+    await localBundledPackage();
     await websitePages();
     equal(external, [], "no requests left the local fixture server");
     check(!consoleText.join(" ").includes(SECRET), "key never logged to the console");

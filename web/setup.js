@@ -397,7 +397,10 @@
     const keys = isPlainObject(data.credentials) ? data.credentials : {};
     const credentials = {nvidia: keys.nvidia === true, openai: keys.openai === true, anthropic: keys.anthropic === true};
     const install = isPlainObject(data.install) && ["idle", "running", "ready", "error"].includes(data.install.state) ? data.install.state : "idle";
-    return {local: true, choices, credentials, install, budget: readBudget(data.budget)};
+    /* Read-aloud is permitted only when the service explicitly says so: it is off when Jarvis starts with offline voice commands. */
+    /* "included": the verified portable package already has the selected tools, so no install step is needed. */
+    const included = install === "ready" && data.install.included === true;
+    return {local: true, choices, credentials, install, included, budget: readBudget(data.budget), readAloud: data.read_aloud_allowed === true};
   }
 
   /* Local allowance reported by the service. Display only; the service enforces it. Anything malformed is dropped. */
@@ -493,11 +496,13 @@ const MESSAGES = {
   promptEmpty: "Type a question first.",
   chat: "No reply. Check the key and your internet connection, then try again.",
   noVoice: "No voice installed on this computer was found, so the reply stays as text.",
+  readAloudOff: "Read aloud is off when Jarvis starts with offline voice commands. This keeps replies from being heard as commands. Typed questions and replies still work.",
   stopped: "Stopped reading aloud.",
   install: "Install did not start. Try again.",
   installIdle: "Downloads only what your plan needs. Nothing is switched on.",
   installRunning: "Installing. You can keep this page open.",
   installReady: "Selected tools are installed. Nothing was switched on.",
+  installIncluded: "This Jarvis package already includes the selected tools, so there is nothing to install. Nothing is switched on. Choose Open dashboard when you are ready.",
   installError: "Install stopped before finishing. Check your internet connection, then choose Install selected tools again.",
   launch: "The dashboard did not open. Try again, or close Jarvis and open its start file again.",
   launchWait: "Install the selected tools first. The dashboard opens once they are ready.",
@@ -798,13 +803,18 @@ function boot(api) {
     const speak = plan.choices.reply === "read_aloud";
     $("speak-row").hidden = !speak;
     if (!speak && $("speak").checked) { $("speak").checked = false; stopSpeaking(); }
+    $("speak").disabled = !server.readAloud || closed();
+    if (!server.readAloud) {
+      if (!$("speak-off")) $("speak-row").append(el("p", {id: "speak-off", className: "hint", text: MESSAGES.readAloudOff}));
+    } else if ($("speak-off")) $("speak-off").remove();
     const install = server.install;
+    $("install").hidden = server.included;
     $("install").disabled = install === "running" || closed();
     $("launch").disabled = install !== "ready" || closed();
     $("install").textContent = install === "running" ? "Installing..." : install === "ready" ? "Install again" : "Install selected tools";
     $("install").className = "button " + (install === "ready" ? "ghost" : "primary");
     $("launch").className = "button " + (install === "ready" ? "primary" : "ghost");
-    $("install-state").textContent = MESSAGES[{idle: "installIdle", running: "installRunning", ready: "installReady", error: "installError"}[install]];
+    $("install-state").textContent = server.included ? MESSAGES.installIncluded : MESSAGES[{idle: "installIdle", running: "installRunning", ready: "installReady", error: "installError"}[install]];
     $("install-state").classList.toggle("bad", install === "error");
   }
 
@@ -812,6 +822,7 @@ function boot(api) {
     const next = api.readQuickstartState(data, state.catalog);
     if (!next) throw new Error("bad state");
     state.server = next;
+    if (!next.readAloud) refuseReadAloud();
     return next;
   }
 
@@ -821,8 +832,15 @@ function boot(api) {
     state.speaking = false;
     $("stop-speaking").hidden = true;
   }
+  function refuseReadAloud() {
+    if (state.speaking || $("speak").checked) stopSpeaking();
+    $("speak").checked = false;
+    $("speak").disabled = true;
+  }
   function readAloud(text) {
-    if (!state.local || !$("speak").checked || state.choices.reply !== "read_aloud") return;
+    if (!state.local) return;
+    if (!state.server || state.server.readAloud !== true) { refuseReadAloud(); return; }
+    if (!$("speak").checked || state.choices.reply !== "read_aloud") return;
     if (!state.reader) state.reader = api.createReader(window.speechSynthesis, window.SpeechSynthesisUtterance);
     const started = state.reader.speak(text, () => { state.speaking = false; $("stop-speaking").hidden = true; });
     state.speaking = started;

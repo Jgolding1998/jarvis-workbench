@@ -1,6 +1,6 @@
 # Build your own dashboard
 
-For the beginner Windows download, use **Jarvis-Windows.zip** and **Start-Jarvis-Windows.cmd**. Python and device packages are included. Choose your role and existing tool, set the allowance slider, then **Install selected tools** and **Open dashboard**. This guide also covers the source edition and manual calibration; its `.venv` commands apply to a source checkout. For the portable edition, use its `runtime\python.exe` from the outer `Jarvis-Windows` folder instead.
+For the beginner Windows download, use **Jarvis-Windows.zip** and **Start-Jarvis-Windows.cmd**. Python and device packages are included. Choose your role and existing tool, set the allowance slider, then choose **Open dashboard**; a complete package has nothing to install. This guide also covers the source edition and manual calibration; its `.venv` commands apply to a source checkout. For the portable edition, use its `runtime\python.exe` from the outer `Jarvis-Windows` folder instead.
 
 ## 1. Try the safe demo
 

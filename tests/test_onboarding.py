@@ -58,6 +58,15 @@ class OnboardingTests(unittest.TestCase):
             time.sleep(.005)
         return self.manager.snapshot()["install"]["state"]
 
+    def test_read_aloud_permission_is_a_boolean_on_every_snapshot(self):
+        self.assertIs(self.manager.snapshot()["read_aloud_allowed"], True)
+        self.assertIs(self.save()["read_aloud_allowed"], True)
+        listening = Onboarding(self.root, vault=self.vault, read_aloud=False)
+        self.assertIs(listening.snapshot()["read_aloud_allowed"], False)
+        self.assertIs(listening.save({"role": "office", "budget": 0, "existing": "none"})["read_aloud_allowed"], False)
+        self.assertIs(listening.save_key("nvidia", "synthetic")["read_aloud_allowed"], False)
+        self.assertIs(Onboarding(self.root, vault=self.vault, read_aloud="yes").snapshot()["read_aloud_allowed"], False)
+
     def test_choices_persist_without_keys_or_device_actions(self):
         self.save()
         marker = "synthetic-private-vault-value"
@@ -244,6 +253,114 @@ class OnboardingTests(unittest.TestCase):
         self.manager._launch = lambda feature: self.launches.append(feature) or "http://127.0.0.1:23456/"
         self.assertEqual(self.manager.launch(True)["url"], "http://127.0.0.1:23456/")
         self.assertEqual(self.launches, ["camera"])
+
+
+CAMERA = {"role": "office", "budget": 0, "existing": "none"}
+HAND = {"role": "creator", "budget": 0, "existing": "none"}
+
+
+class BundledOnboardingTests(unittest.TestCase):
+    """A complete portable bundle needs no install step; nothing is installed, downloaded or started automatically."""
+
+    def setUp(self):
+        from tests.test_bundle import make_bundle
+        self.temp = tempfile.TemporaryDirectory()
+        self.make_bundle = make_bundle
+        self.root, python = make_bundle(self.temp.name)
+        self.installs, self.launches, self.hashes = [], [], []
+        from jarvis import bundle, install_tools
+        original = bundle._hand_model_ok
+        def counted(*args):
+            self.hashes.append(1)
+            return original(*args)
+        refuse = lambda *args, **kwargs: self.fail("no install, pip or download may run automatically")
+        self.patches = [patch("sys.executable", str(python)), patch.object(bundle, "_hand_model_ok", counted),
+                        patch.object(install_tools, "install", refuse), patch.object(install_tools, "download_model", refuse),
+                        patch("urllib.request.urlopen", refuse), patch("subprocess.run", refuse), patch("subprocess.Popen", refuse)]
+        for item in self.patches:
+            item.start()
+
+    def tearDown(self):
+        for item in reversed(self.patches):
+            item.stop()
+        self.temp.cleanup()
+
+    def manager(self, root=None):
+        return Onboarding(root or self.root, vault=Vault(), installer=self.installs.append,
+                          launch=lambda feature: self.launches.append(feature) or "http://127.0.0.1:12345/")
+
+    def assert_included(self, state, included=True):
+        self.assertEqual(state["install"]["state"], "ready" if included else "idle")
+        self.assertIs(state["install"]["included"], included)
+
+    def test_complete_bundle_is_ready_without_installing_and_launch_still_needs_consent(self):
+        for choices, feature in ((CAMERA, "camera"), (HAND, "hand")):
+            with self.subTest(feature=feature):
+                threads = {thread.name for thread in threading.enumerate()}
+                manager = self.manager()
+                self.assert_included(manager.save(choices))
+                self.assertEqual(self.installs, [])
+                self.assertNotIn("jarvis-install", {thread.name for thread in threading.enumerate()} - threads)
+                self.assertEqual(self.launches, [])
+                with self.assertRaises(OnboardingError):
+                    manager.launch(False)
+                self.assertEqual(manager.launch(True), {"url": "http://127.0.0.1:12345/"})
+                self.assertEqual(self.launches.pop(), feature)
+
+    def test_hand_model_is_hashed_once_per_feature_choice_not_per_poll_or_budget_change(self):
+        manager = self.manager()
+        manager.save(HAND)
+        self.assertEqual(len(self.hashes), 1)
+        for _ in range(5):
+            self.assert_included(manager.snapshot())
+        self.assert_included(manager.save({**HAND, "budget": 5}))
+        self.assertEqual(len(self.hashes), 1)
+        self.assert_included(manager.save(CAMERA))
+        self.assert_included(manager.save(HAND))
+        self.assertEqual(len(self.hashes), 2)
+
+    def test_reopening_saved_choices_checks_once_and_is_ready(self):
+        self.manager().save(HAND)
+        self.hashes.clear()
+        reopened = self.manager()
+        self.assertEqual(len(self.hashes), 1)
+        self.assert_included(reopened.snapshot())
+        self.assertEqual(self.installs, [])
+
+    def test_incomplete_or_source_editions_stay_idle_until_explicit_install(self):
+        (self.root / "models" / "hand_landmarker.task").write_bytes(b"tampered")
+        manager = self.manager()
+        self.assert_included(manager.save(HAND), included=False)
+        self.assert_included(manager.save(CAMERA))
+        source = Path(self.temp.name) / "source"
+        source.mkdir()
+        self.assert_included(self.manager(source).save(CAMERA), included=False)
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.make_bundle(directory, dist_names={"mediapipe": "1.2.0"})
+            self.assert_included(self.manager(root).save(CAMERA), included=False)
+        self.assert_included(manager.save(HAND), included=False)
+        with self.assertRaises(OnboardingError):
+            manager.launch(True)
+        self.assertEqual((self.installs, self.launches), ([], []))
+
+    def test_explicit_recheck_still_runs_the_installer_on_request(self):
+        manager = self.manager()
+        manager.save(CAMERA)
+        manager.start_install(True)
+        end = time.monotonic() + 3
+        while manager.snapshot()["install"]["state"] == "running" and time.monotonic() < end:
+            time.sleep(.005)
+        state = manager.snapshot()
+        self.assertEqual((state["install"]["state"], state["install"]["included"]), ("ready", False))
+        self.assertEqual(self.installs, ["camera"])
+
+    def test_returning_from_an_incomplete_feature_restores_ready_for_the_complete_one(self):
+        (self.root / "models" / "hand_landmarker.task").write_bytes(b"tampered")
+        manager = self.manager()
+        self.assert_included(manager.save(CAMERA))
+        self.assert_included(manager.save(HAND), included=False)
+        self.assert_included(manager.save(CAMERA))
+        self.assertEqual(self.installs, [])
 
 
 class OnboardingHTTPTests(unittest.TestCase):

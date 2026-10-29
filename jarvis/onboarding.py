@@ -24,8 +24,10 @@ class OnboardingError(ValueError):
 
 
 class Onboarding:
-    def __init__(self, root, *, vault=None, responder=None, installer=None, launch=None, budget=None):
+    def __init__(self, root, *, vault=None, responder=None, installer=None, launch=None, budget=None, read_aloud=True):
         self.root = Path(root)
+        # False when this process starts with offline voice commands: spoken replies could be heard as commands.
+        self._read_aloud = read_aloud is True
         self._vault = vault
         self._responder = responder
         self._installer = installer or self._install
@@ -41,6 +43,8 @@ class Onboarding:
         self._desktop_url = None
         self._desktop_process = None
         self._launching = False
+        self._included = False
+        self._checked_feature = self._checked_ready = None
         try:
             path = install_tools.local_path(self.root, "runtime", "quickstart.json")
             if path.is_file() and path.stat().st_size <= 1024 and path.stat().st_nlink == 1:
@@ -48,6 +52,26 @@ class Onboarding:
                 self._choices = validate_choices(planner.parse_json(path.read_bytes()))
         except (ValueError, OSError, TypeError):
             pass
+        if self._choices is not None:
+            from .quickstart import recommend
+            self._use_bundled(self._feature(recommend(self._choices)))
+
+    def _use_bundled(self, feature):
+        """Mark a feature ready when the verified portable bundle already contains it. Never installs or downloads.
+
+        The check (which hashes the hand model) runs once per selected feature, not on state polls or same-feature saves."""
+        if feature != self._checked_feature:
+            from . import bundle
+            try:
+                ready = bundle.is_bundled(self.root) and bundle.feature_ready(self.root, feature)
+            except (OSError, ValueError):
+                ready = False
+            self._checked_feature, self._checked_ready = feature, ready
+        if self._checked_ready:
+            self._installed_feature = feature
+            self._install_state = "ready"
+            self._install_message = "This Jarvis package already includes the selected tools. Nothing was downloaded or switched on."
+            self._included = True
 
     def _credentials(self):
         if self._vault is None:
@@ -92,8 +116,9 @@ class Onboarding:
             return {"local": True, "choices": choices,
                     "plan": recommend(choices) if choices else None,
                     "credentials": credentials,
-                    "install": {"state": self._install_state, "message": self._install_message},
-                    "providers": catalog(), "budget": allowance}
+                    "install": {"state": self._install_state, "message": self._install_message,
+                                "included": self._included and self._install_state == "ready"},
+                    "providers": catalog(), "budget": allowance, "read_aloud_allowed": self._read_aloud}
 
     def save(self, choices):
         from .quickstart import validate_choices, recommend
@@ -127,8 +152,11 @@ class Onboarding:
             self._choices = choices
             feature = self._feature(plan)
             if self._installed_feature != feature:
+                self._installed_feature = None
                 self._install_state = "idle"
                 self._install_message = "Install the tools for your selected setup."
+                self._included = False
+                self._use_bundled(feature)
         return self.snapshot()
 
     @staticmethod
@@ -193,6 +221,7 @@ class Onboarding:
                 raise OnboardingError("Close the desktop app before reinstalling its tools.")
             feature = self._feature(recommend(self._choices))
             self._install_state = "running"
+            self._included = False
             self._install_message = "Preparing the selected tools. Devices remain off."
 
         def worker():

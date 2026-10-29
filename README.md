@@ -10,7 +10,7 @@ A local workstation assistant with hand gestures, a presence guard, and optional
 
 **Windows x64:** download **Jarvis-Windows.zip** and its checksum from the same release, verify SHA-256, and extract the folder. Double-click **Start-Jarvis-Windows.cmd**. Python, the device packages, and the hand model are included. No administrator account is needed.
 
-Choose your purpose, monthly AI allowance, existing AI, typing or voice tools, reply preference and optional future automation. Use **Next** between questions. Review the recommendation and choose **Install selected tools**. In the portable edition this checks the included dependencies. The source edition installs them into the project's `.venv`. **Open dashboard** starts the selected Windows feature idle, with real actions disarmed.
+Choose your purpose, monthly AI allowance, existing AI, typing or voice tools, reply preference and optional future automation. Use **Next** between questions. Review the recommendation. A complete portable edition already includes the selected tools, so it skips the install step and goes straight to **Open dashboard**. The source edition (or an incomplete package) shows **Install selected tools**, which installs into the project's `.venv` only after you choose it. **Open dashboard** starts the selected Windows feature idle, with real actions disarmed.
 
 AI chat is optional. If you choose a cloud provider, create your own API key on its official website and enter it in the local app. It is kept in Windows Credential Manager. The public website never asks for a key. Testing a connection sends one short request only after you confirm it and may use your provider credits.
 

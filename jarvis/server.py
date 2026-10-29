@@ -560,7 +560,8 @@ def serve(args, open_path=None, opener=None):
     def request_exit():
         threading.Thread(target=holder["server"].shutdown, daemon=True).start()
 
-    server = LocalHTTPServer(("127.0.0.1", args.port), make_handler(service, secrets.token_urlsafe(32), SetupContext(on_exit=request_exit)))
+    server = LocalHTTPServer(("127.0.0.1", args.port), make_handler(service, secrets.token_urlsafe(32), SetupContext(
+        on_exit=request_exit, onboarding=Onboarding(planner.ROOT, read_aloud=args.voice_model is None))))
     holder["server"] = server
     stop = threading.Event()
 

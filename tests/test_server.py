@@ -10,6 +10,34 @@ from jarvis.actions import Actions
 from jarvis.server import LocalHTTPServer, Service, SetupContext, make_handler
 
 
+class ServeWiringTests(unittest.TestCase):
+    """serve() with every socket, device thread and credential store replaced."""
+
+    def run_serve(self, flags):
+        from jarvis import server
+        captured, listening = {}, threading.Event()
+
+        class FakeServer:
+            server_address = ("127.0.0.1", 0)
+            def __init__(self, address, handler):
+                pass
+            def serve_forever(self):
+                raise KeyboardInterrupt
+            def server_close(self):
+                pass
+
+        def handler(service, token, setup):
+            captured["setup"] = setup
+        with patch.object(server, "LocalHTTPServer", FakeServer), patch.object(server, "make_handler", handler),                 patch.object(server, "Onboarding") as onboarding, patch("jarvis.devices.run_voice", lambda *args: listening.set()), patch("builtins.print"):
+            server.serve(server.build_parser().parse_args(flags))
+        self.assertIs(captured["setup"].onboarding, onboarding.return_value)
+        return onboarding.call_args.kwargs["read_aloud"], listening.wait(2 if "--voice-model" in flags else 0.2)
+
+    def test_read_aloud_is_refused_only_when_the_voice_command_listener_runs(self):
+        self.assertEqual(self.run_serve(["--demo", "--port", "0"]), (True, False))
+        self.assertEqual(self.run_serve(["--demo", "--port", "0", "--voice-model", "."]), (False, True))
+
+
 class ServerTests(unittest.TestCase):
     def test_versionless_requests_have_controlled_json_errors(self):
         marker = "-".join(("fixture", "request", "only")).encode("ascii")

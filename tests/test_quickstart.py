@@ -335,7 +335,7 @@ class JavaScriptParityTests(unittest.TestCase):
                           "launch:['http://127.0.0.1:8765/','http://127.0.0.1:0/','http://127.0.0.1:8765/x','https://127.0.0.1:8765/','http://127.0.0.1.evil:80/','http://evil/',5].map(api.isSafeLaunchUrl),"
                           "loop:[[{protocol:'http:',hostname:'127.0.0.1'},'auto'],[{protocol:'http:',hostname:'127.0.0.1'},'hosted'],[{protocol:'http:',hostname:'localhost'},'auto']].map(a=>api.isLoopbackPage(a[0],a[1])),"
                           "state:[api.readQuickstartState({local:false},catalog),api.readQuickstartState({local:true,choices:{role:'bad'},credentials:{nvidia:'yes',openai:true},install:{state:'weird'}},catalog),"
-                          "api.readQuickstartState({local:true,choices:{role:'office',budget:10,existing:'none'},install:{state:'ready',message:'x'}},catalog)]}));});")
+                          "api.readQuickstartState({local:true,choices:{role:'office',budget:10,existing:'none'},install:{state:'ready',message:'x'},read_aloud_allowed:true},catalog)]}));});")
         result = run_node(self, script, {"catalog": CATALOG})
         self.assertEqual(result["query"][:4], [None, quickstart.validate_choices({"role": "study", "budget": 25, "existing": "ollama"}), quickstart.ERROR_ROLE, quickstart.ERROR_SHAPE])
         self.assertEqual(result["query"][4], quickstart.ERROR_SHAPE)
@@ -345,8 +345,10 @@ class JavaScriptParityTests(unittest.TestCase):
         self.assertEqual(result["launch"], [True, False, False, False, False, False, False])
         self.assertEqual(result["loop"], [True, False, False])
         self.assertIsNone(result["state"][0])
-        self.assertEqual(result["state"][1], {"local": True, "choices": None, "credentials": {"nvidia": False, "openai": True, "anthropic": False}, "install": "idle", "budget": None})
+        self.assertEqual(result["state"][1], {"local": True, "choices": None, "credentials": {"nvidia": False, "openai": True, "anthropic": False}, "install": "idle", "included": False, "budget": None, "readAloud": False})
         self.assertEqual(result["state"][2]["choices"], quickstart.validate_choices({"role": "office", "budget": 10, "existing": "none"}))
+        self.assertIs(result["state"][2]["readAloud"], True)
+        self.assertIs(result["state"][2]["included"], False)
 
     def test_reader_uses_only_on_device_voices_and_can_cancel(self):
         script = STDIN + r"""
@@ -395,7 +397,9 @@ class StaticSafetyTests(unittest.TestCase):
     def test_read_aloud_is_local_only_and_opt_in(self):
         source = SETUP_JS.read_text(encoding="utf-8")
         self.assertEqual(source.count("api.createReader("), 1)
-        self.assertIn('if (!state.local || !$("speak").checked || state.choices.reply !== "read_aloud") return;', source)
+        self.assertIn('if (!state.local) return;\n    if (!state.server || state.server.readAloud !== true) { refuseReadAloud(); return; }\n'
+                      '    if (!$("speak").checked || state.choices.reply !== "read_aloud") return;', source)
+        self.assertIn("readAloud: data.read_aloud_allowed === true", source)
         self.assertIn("voice.localService === true", source)
         for event in ('"pagehide", stopSpeaking', '"visibilitychange"', 'event.key === "Escape"'):
             self.assertIn(event, source)
