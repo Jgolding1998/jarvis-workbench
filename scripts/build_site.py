@@ -36,7 +36,10 @@ def build(destination: Path):
             if content.count(marker) != 1:
                 raise ValueError("The local setup mode marker is missing or ambiguous")
             content = content.replace(marker, 'name="jarvis-mode" content="hosted"')
-            content = content.replace('<a id="privacy-link"', '<a href="practice.html">Hand controls</a>\n    <a id="privacy-link"')
+            practice_anchor = '<a id="privacy-link"'
+            if content.count(practice_anchor) != 1:
+                raise ValueError("The hosted practice link insertion point is missing or ambiguous")
+            content = content.replace(practice_anchor, '<a href="practice.html">Hand controls</a>\n    ' + practice_anchor)
             if 'type="password"' in content:
                 raise ValueError("The hosted setup page must not contain a key field")
             destination.joinpath(name).write_text(content, encoding="utf-8")

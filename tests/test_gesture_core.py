@@ -279,7 +279,10 @@ class LoweredHandTests(unittest.TestCase):
     def test_lowered_hand_cannot_arm_a_clap(self):
         self.frames((posed(*RAISED), posed(0.9, 0.9)), (posed(*RAISED), posed(0.55, 0.36)))
         self.assertTrue(self.controller.active)
-        self.assertEqual(self.controller.reason, "Two hands seen; bring them together to stop")
+        self.assertEqual(self.controller.reason, "Raise both hands apart, then bring them together to stop")
+        self.frames((posed(0.2, 0.35), posed(0.8, 0.35)), (posed(0.47, 0.35), posed(0.53, 0.35)))
+        self.assertFalse(self.controller.active)
+        self.assertEqual(self.controller.reason, "Visual clap: hand control stopped")
 
     def test_both_raised_hands_still_clap_apart_then_together(self):
         self.frames((posed(0.2, 0.4), posed(0.8, 0.4)), (posed(0.47, 0.4), posed(0.53, 0.4)))

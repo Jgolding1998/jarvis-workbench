@@ -209,7 +209,8 @@ class HandController:
             elif distance <= self.settings.clap_close and self._clap_armed:
                 self._stop("Visual clap: hand control stopped")
                 return
-            self._idle("Two hands seen; bring them together to stop")
+            self._idle("Two hands seen; bring them together to stop" if self._clap_armed else
+                       "Raise both hands apart, then bring them together to stop")
             return
         if not parsed:
             self._idle("No hand in view; pointer idle")

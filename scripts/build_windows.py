@@ -870,6 +870,10 @@ def smoke_test(zip_path, work, pth_name, stdlib_zip):
 
         choices = {"role": "creator", "budget": 0, "existing": "none"}
         saved = post_json(url, "/api/quickstart/save", {"choices": choices}, token)
+        expected_choices = {**choices, "dictation": "keyboard", "reply": "none", "automation": "none"}
+        checks["legacy setup choices migrate to six explicit answers"] = saved["choices"] == expected_choices
+        if not checks["legacy setup choices migrate to six explicit answers"]:
+            raise BuildError("Bundled onboarding did not migrate saved choices")
         post_json(url, "/api/quickstart/install", {"consent": True}, token)
         deadline = time.monotonic() + 30
         while True:
@@ -878,7 +882,7 @@ def smoke_test(zip_path, work, pth_name, stdlib_zip):
             if setup_state["install"]["state"] != "running" or time.monotonic() >= deadline:
                 break
             time.sleep(.1)
-        checks["bundled onboarding installs hand tools without runtime pip"] = saved["choices"] == choices and setup_state["install"]["state"] == "ready"
+        checks["bundled onboarding installs hand tools without runtime pip"] = setup_state["install"]["state"] == "ready"
         if not checks["bundled onboarding installs hand tools without runtime pip"]:
             raise BuildError("Bundled onboarding did not become ready")
         desktop = post_json(url, "/api/quickstart/launch", {"consent": True}, token)["url"].rstrip("/")
