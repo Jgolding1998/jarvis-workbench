@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -335,6 +336,30 @@ class BudgetTests(unittest.TestCase):
             with self.assertRaises(budget.BudgetError):
                 self.ledger.reserve("openai",1)
         self.assertEqual(len(checks),3)
+        self.assertEqual(self.ledger.snapshot(1)["paid_requests"],1)
+
+    def test_unlinked_journal_inode_is_rechecked_and_never_treated_as_a_hardlink(self):
+        self.ledger.reserve("openai",1)
+        original = budget.install_tools.local_path
+        class DisappearingJournal:
+            def __init__(self, persistent=False):
+                self.calls = 0
+                self.persistent = persistent
+            def lstat(self):
+                self.calls += 1
+                if self.calls > 1 and not self.persistent:
+                    raise FileNotFoundError()
+                return SimpleNamespace(st_mode=0o100600,st_nlink=0,st_size=0)
+        def checked_path(journal):
+            def choose(root,*parts):
+                return journal if parts[-1] == "budget.sqlite3-journal" else original(root,*parts)
+            return choose
+        vanished = DisappearingJournal()
+        with patch.object(budget.install_tools,"local_path",side_effect=checked_path(vanished)):
+            self.assertEqual(self.ledger.snapshot(1)["paid_requests"],1)
+        with patch.object(budget.install_tools,"local_path",side_effect=checked_path(DisappearingJournal(persistent=True))):
+            with self.assertRaises(budget.BudgetError):
+                self.ledger.reserve("openai",1)
         self.assertEqual(self.ledger.snapshot(1)["paid_requests"],1)
 
     def test_existing_corrupt_empty_or_foreign_database_is_never_reset(self):

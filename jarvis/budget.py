@@ -84,6 +84,12 @@ class BudgetLedger:
                 info = candidate.lstat()
             except FileNotFoundError:
                 continue
+            if suffix == "-journal" and info.st_nlink == 0:
+                # SQLite can unlink its journal while lstat is reading the inode.
+                try:
+                    info = candidate.lstat()
+                except FileNotFoundError:
+                    continue
             if not suffix and info.st_nlink == 2:
                 deadline = time.monotonic() + 1
                 while info.st_nlink == 2 and time.monotonic() < deadline:
