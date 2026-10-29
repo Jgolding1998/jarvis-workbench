@@ -87,6 +87,54 @@ class World:
 
 
 class CameraDeviceTests(unittest.TestCase):
+    def test_bad_frames_and_detector_errors_recover_after_rearming(self):
+        for failure in ("empty", "zero-width", "resize", "detector", "read"):
+            with self.subTest(failure=failure):
+                def on_wait(world):
+                    if world.faults and len(world.captures) == 1:
+                        world.service.command("inactive")
+                        world.service.arm(True, False)
+                        world.service.command("active")
+                    if len(world.captures) == 2 and world.service.presence.last_frame is not None:
+                        world.stopped = True
+
+                world = World(lambda read, now: 1, until=10, on_wait=on_wait)
+                original_read = world.cv2.VideoCapture.read
+                original_detector = world.cv2.HOGDescriptor
+
+                def read(capture):
+                    result = original_read(capture)
+                    if world.reads == 1:
+                        if failure == "empty":
+                            return True, None
+                        if failure == "zero-width":
+                            return True, types.SimpleNamespace(shape=(480, 0, 3))
+                        if failure == "read":
+                            raise ValueError("synthetic driver error")
+                    return result
+
+                def resize(frame, size):
+                    if failure == "resize" and world.reads == 1:
+                        raise ValueError("synthetic resize error")
+                    self.assertLessEqual(size[1], 1280)
+                    return frame
+
+                class Detector(original_detector):
+                    def detectMultiScale(self, frame, **options):
+                        if failure == "detector" and world.reads == 1:
+                            raise ValueError("synthetic detector error")
+                        return super().detectMultiScale(frame, **options)
+
+                world.cv2.VideoCapture.read = read
+                world.cv2.resize = resize
+                world.cv2.HOGDescriptor = Detector
+                world.run()
+                self.assertEqual(world.faults, 1)
+                self.assertEqual(len(world.captures), 2)
+                self.assertEqual([capture.released for capture in world.captures], [1, 1])
+                self.assertIsNotNone(world.service.presence.last_frame)
+                self.assertIsNone(world.service.camera.owner)
+
     def test_restart_does_not_depend_on_the_clock_tick_being_different(self):
         def on_wait(world):
             if world.faults and len(world.captures) == 1:

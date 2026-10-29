@@ -53,7 +53,23 @@ def run_camera(service, stop: threading.Event, device=0):
                 failures = 0
             if not service.is_active():
                 continue
-            ok, frame = camera.read()
+            try:
+                ok, frame = camera.read()
+                if ok:
+                    height, width = frame.shape[:2]
+                    if not 1 <= width <= 8192 or not 1 <= height <= 8192:
+                        raise ValueError("Invalid camera frame")
+                    frame = cv2.resize(frame, (640, max(128, min(1280, int(height * 640 / width)))))
+                    boxes, _ = detector.detectMultiScale(frame, winStride=(8, 8), padding=(8, 8), scale=1.05)
+            except Exception:
+                faulted_session = _presence_session(service)
+                camera.release()
+                camera = None
+                service.camera_fault()
+                service.presence_camera_closed(lease)
+                lease = None
+                stop.wait(0.15)
+                continue
             if not ok:
                 failures += 1
                 if failures >= FAILED_READS_BEFORE_FAULT:
@@ -66,9 +82,6 @@ def run_camera(service, stop: threading.Event, device=0):
                 stop.wait(0.15)
                 continue
             failures = 0
-            height, width = frame.shape[:2]
-            frame = cv2.resize(frame, (640, max(128, int(height * 640 / width))))
-            boxes, _ = detector.detectMultiScale(frame, winStride=(8, 8), padding=(8, 8), scale=1.05)
             service.observe(min(20, len(boxes)))
             del frame
             stop.wait(0.15)
