@@ -35,7 +35,10 @@ def first_process_reservations(root, barrier, queue):
     barrier.wait(timeout=20)
     accepted = 0
     failures = []
-    for _ in range(10):
+    retries = 0
+    for _ in range(12):
+        if accepted == 10:
+            break
         try:
             ledger.reserve("openai",1)
             accepted += 1
@@ -43,12 +46,18 @@ def first_process_reservations(root, barrier, queue):
             cause = error.__context__
             trace = cause.__traceback__ if cause is not None else error.__traceback__
             lines = []
+            before_write = False
             while trace is not None:
+                before_write |= trace.tb_frame.f_code.co_name == "_write_transaction"
                 lines.append((Path(trace.tb_frame.f_code.co_filename).name, trace.tb_lineno))
                 trace = trace.tb_next
+            # A slow runner can exhaust the bounded BEGIN wait. Only that pre-write failure is safe to resubmit.
+            if before_write and getattr(cause, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY and retries < 2:
+                retries += 1
+                continue
             failures.append((type(cause).__name__, getattr(cause, "sqlite_errorcode", None),
                              getattr(cause, "errno", None), getattr(cause, "winerror", None), lines))
-    queue.put((accepted, failures))
+    queue.put((accepted, failures, retries))
 
 
 def crash_before_publication(root):
@@ -168,6 +177,19 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(connect.call_count,2)
         self.assertEqual(db.close.call_count,2)
         pause.assert_called_once_with(0.01)
+
+    def test_busy_deadline_preserves_reservations_and_a_later_call_can_succeed(self):
+        self.assertEqual(self.ledger.reserve("openai", 1)["paid_requests"], 1)
+        with closing(sqlite3.connect(self.path, isolation_level=None)) as holder:
+            holder.execute("BEGIN IMMEDIATE")
+            try:
+                with self.assertRaises(budget.BudgetError) as caught:
+                    self.ledger.reserve("openai", 1)
+                self.assertEqual(caught.exception.__context__.sqlite_errorcode, sqlite3.SQLITE_BUSY)
+            finally:
+                holder.execute("ROLLBACK")
+        self.assertEqual(self.ledger.snapshot(1)["paid_requests"], 1)
+        self.assertEqual(self.ledger.reserve("openai", 1)["paid_requests"], 2)
 
     def test_non_busy_begin_errors_are_closed_and_never_retried(self):
         error = sqlite3.OperationalError("synthetic readonly")
@@ -376,7 +398,9 @@ class BudgetTests(unittest.TestCase):
             for process in workers:
                 process.join(timeout=30)
                 self.assertEqual(process.exitcode,0)
-            self.assertEqual([queue.get(timeout=3) for _ in workers],[(10, [])]*6)
+            results = [queue.get(timeout=3) for _ in workers]
+            self.assertEqual([(accepted, failures) for accepted, failures, _ in results], [(10, [])]*6)
+            self.assertTrue(all(0 <= retries <= 2 for _, _, retries in results))
             self.assertEqual(budget.BudgetLedger(root,now=NOW).snapshot(1)["paid_requests"],60)
             self.assertEqual([path.name for path in (root/"runtime").iterdir()],["budget.sqlite3"])
         finally:
