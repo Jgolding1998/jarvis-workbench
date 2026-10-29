@@ -100,11 +100,23 @@ class BudgetLedger:
                     or info.st_size > MAX_DB_BYTES or suffix in {"-wal", "-shm"}):
                 raise BudgetError()
             if not suffix and check_header:
-                with candidate.open("rb") as stream:
-                    header = stream.read(20)
+                header = self._header(candidate)
                 if header[:16] != b"SQLite format 3\0" or header[18:20] != b"\x01\x01":
                     raise BudgetError()
         return path
+
+    @staticmethod
+    def _header(candidate, *, windows=None):
+        windows = os.name == "nt" if windows is None else windows
+        until = time.monotonic() + 1
+        while True:
+            try:
+                with candidate.open("rb") as stream:
+                    return stream.read(20)
+            except PermissionError as error:
+                if not windows or getattr(error, "winerror", None) not in {5, 32, 33} or time.monotonic() >= until:
+                    raise
+                time.sleep(0.01)
 
     @staticmethod
     def _publish(temporary, target, *, windows=None):

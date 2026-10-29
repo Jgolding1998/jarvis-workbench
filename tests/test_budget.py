@@ -94,6 +94,40 @@ class BudgetTests(unittest.TestCase):
                 self.ledger.reserve(provider,0)
         self.assertEqual(list(self.root.iterdir()), [])
 
+    def test_transient_windows_header_sharing_conflict_retries_the_read_only(self):
+        self.ledger.reserve("openai",1)
+        expected = self.path.read_bytes()[:20]
+        original = Path.open
+        attempts = []
+        def temporarily_shared(path, *args, **kwargs):
+            attempts.append(path)
+            if len(attempts) < 3:
+                error = PermissionError("Synthetic Windows sharing conflict")
+                error.winerror = 32
+                raise error
+            return original(path,*args,**kwargs)
+        with patch.object(Path,"open",temporarily_shared):
+            self.assertEqual(self.ledger._header(self.path,windows=True),expected)
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(self.ledger.snapshot(1)["paid_requests"],1)
+
+    def test_permanent_windows_header_denial_stays_bounded_and_fails_closed(self):
+        error = PermissionError("Synthetic permanent sharing conflict")
+        error.winerror = 33
+        with patch.object(Path,"open",side_effect=error), patch("jarvis.budget.time.monotonic",side_effect=[100,100.1,101.1]), \
+                patch("jarvis.budget.time.sleep") as pause:
+            with self.assertRaises(PermissionError):
+                self.ledger._header(self.path,windows=True)
+            self.assertEqual(pause.call_count,1)
+
+    def test_other_header_errors_are_not_retried(self):
+        error = PermissionError("Synthetic denial")
+        error.winerror = 32
+        with patch.object(Path,"open",side_effect=error), patch("jarvis.budget.time.sleep") as pause:
+            with self.assertRaises(PermissionError):
+                self.ledger._header(self.path,windows=False)
+            pause.assert_not_called()
+
     def test_reservations_persist_and_free_calls_do_not_consume_them(self):
         self.assertEqual(self.ledger.reserve("openai",1)["reserved_usd"],0.01)
         restored = budget.BudgetLedger(self.root,now=NOW)

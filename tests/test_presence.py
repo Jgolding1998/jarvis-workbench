@@ -93,6 +93,34 @@ class PresenceTests(unittest.TestCase):
         self.guard.observe(2, 18)
         self.assertEqual(self.guard.observe(2, 20), ["boss_alert"])
 
+    def test_camera_fault_does_not_count_as_a_clear_crowd_window(self):
+        for fault in (lambda guard: guard.fail("Camera unavailable", 10), lambda guard: guard.tick(10)):
+            with self.subTest(fault=fault):
+                self.setUp()
+                self.active(sheet=True)
+                self.guard.observe(2, 1)
+                self.assertEqual(self.guard.observe(2, 3), ["boss_alert"])
+                self.guard.observe(1, 4)
+                fault(self.guard)
+                self.guard.observe(1, 11)
+                self.guard.observe(2, 12)
+                self.assertEqual(self.guard.observe(2, 14), [])
+                self.guard.observe(1, 15)
+                self.guard.observe(1, 20)
+                self.guard.observe(2, 21)
+                self.assertEqual(self.guard.observe(2, 23), ["boss_alert"])
+
+    def test_unknown_camera_does_not_accumulate_observed_absence(self):
+        for fault in (lambda guard: guard.fail("Camera unavailable", 3), lambda guard: guard.tick(7)):
+            with self.subTest(fault=fault):
+                self.setUp()
+                self.active()
+                self.guard.observe(0, 1)
+                fault(self.guard)
+                self.assertEqual(self.guard.snapshot(8)["absent_seconds"], 0)
+                self.guard.observe(0, 9)
+                self.assertEqual(self.guard.snapshot(10)["absent_seconds"], 1)
+
     def test_privacy_lock_is_extra_person_action_when_armed(self):
         self.active(lock=True)
         self.guard.observe(2, 1)

@@ -109,6 +109,8 @@ class Presence:
         self.camera_error = "Camera unavailable"
         self.people = None
         self.crowd_since = None
+        self.clear_since = None
+        self.absent_since = None
         return self._evaluate(now)
 
     def tick(self, now: float):
@@ -125,6 +127,8 @@ class Presence:
             self.camera_error = "Camera unavailable"
             self.people = None
             self.crowd_since = None
+            self.clear_since = None
+            self.absent_since = None
             if self.lock_armed and not self.lock_fired:
                 self.lock_fired = True
                 actions.append("lock_camera_fault")
@@ -149,6 +153,6 @@ class Presence:
             "active": self.active, "lock_armed": self.lock_armed, "sheet_armed": self.sheet_armed,
             "people": self.people, "camera": "fault" if self.camera_error or stale else ("receiving" if self.last_frame is not None else "waiting"),
             "established": self.established,
-            "absent_seconds": round(now - self.absent_since, 1) if self.active and self.established and self.absent_since is not None else 0,
+            "absent_seconds": round(now - self.absent_since, 1) if self.active and self.established and self.absent_since is not None and not stale and not self.camera_error else 0,
             "lock_fired": self.lock_fired,
         }
