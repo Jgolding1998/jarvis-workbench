@@ -20,6 +20,7 @@ jobs:
         shell: python -I {0}
         run: |
           import hashlib
+          import json
           import os
           from pathlib import Path, PurePosixPath, PureWindowsPath
           import subprocess
@@ -33,7 +34,7 @@ jobs:
           head = git('rev-parse', 'HEAD').decode('ascii').strip()
           if head != os.environ['GITHUB_SHA']:
               raise ValueError('Checkout does not match the workflow commit')
-          if git('show', 'HEAD:.gitattributes') != b'*.cmd text eol=crlf\n':
+          if git('show', 'HEAD:.gitattributes') != b'*.cmd text eol=crlf\nscripts/licenses/* -text\n':
               raise ValueError('Review source archive handling for changed Git attributes')
           epoch = int(git('log', '-1', '--format=%ct').strip())
           destination = Path(os.environ['RUNNER_TEMP']) / 'jarvis-artifacts'
@@ -41,6 +42,9 @@ jobs:
           output = destination / 'Get-Jarvis-Workbench.zip'
           entries = git('ls-tree', '-r', '-z', 'HEAD').split(b'\0')
           expected_content = {}
+          manifest = json.loads(git('show', 'HEAD:scripts/windows_bundle_manifest.json'))
+          license_hashes = {'scripts/licenses/' + item['file']: item['sha256'] for item in manifest['license_supplements']}
+          verified_licenses = set()
           with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
               archive.comment = ('Source commit ' + head).encode('ascii')
               for entry in sorted(filter(None, entries), key=lambda row: row.split(b'\t', 1)[1]):
@@ -57,12 +61,18 @@ jobs:
                   data = git('cat-file', 'blob', oid.decode('ascii'))
                   if path.endswith('.cmd'):
                       data = data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+                  if path.startswith('scripts/licenses/'):
+                      if license_hashes.get(path) != hashlib.sha256(data).hexdigest():
+                          raise ValueError('Committed license bytes do not match the build manifest')
+                      verified_licenses.add(path)
                   info = zipfile.ZipInfo(path, time.gmtime(epoch)[:6])
                   info.compress_type = zipfile.ZIP_DEFLATED
                   info.create_system = 3
                   info.external_attr = int(mode, 8) << 16
                   archive.writestr(info, data, compresslevel=9)
                   expected_content[path] = hashlib.sha256(data).hexdigest()
+          if verified_licenses != set(license_hashes):
+              raise ValueError('A committed license supplement is missing')
           digest = hashlib.sha256(output.read_bytes()).hexdigest()
           output.with_suffix('.zip.sha256').write_text(digest + '  ' + output.name + '\n', encoding='ascii')
           with zipfile.ZipFile(output) as archive:

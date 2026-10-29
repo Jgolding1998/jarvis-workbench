@@ -30,6 +30,7 @@ import os
 import re
 import shutil
 import ssl
+import stat
 import subprocess
 import sys
 import tarfile
@@ -203,6 +204,70 @@ def download(url, target, expected_sha, max_bytes=256 * 1024 * 1024):
         partial.unlink(missing_ok=True)
         raise BuildError("SHA-256 mismatch for " + url)
     os.replace(partial, target)
+    return target
+
+
+def _checked_license_bytes(path, expected_sha):
+    try:
+        for parent in reversed(path.parents):
+            info = parent.lstat()
+            if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise BuildError("Checked-in license path is unsafe")
+        before = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise BuildError("Checked-in license could not be read") from None
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or getattr(before, "st_file_attributes", 0) & 0x400 or before.st_size > 1024 * 1024:
+        raise BuildError("Checked-in license must be an ordinary file within the byte limit")
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            current = os.fstat(stream.fileno())
+            if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1 or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+                raise BuildError("Checked-in license changed while opening")
+            data = stream.read(1024 * 1024 + 1)
+    except OSError:
+        raise BuildError("Checked-in license could not be read") from None
+    if len(data) > 1024 * 1024 or hashlib.sha256(data).hexdigest() != expected_sha:
+        raise BuildError("Checked-in license SHA-256 or byte limit mismatch")
+    return data
+
+
+def fetch_license_supplement(item, cache, *, source_dir=None):
+    name, expected_sha = item.get("file"), item.get("sha256")
+    if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.txt", name)
+            or not isinstance(expected_sha, str) or not SHA256.fullmatch(expected_sha) or not _url_ok(item.get("url"), "license")):
+        raise BuildError("Invalid license supplement")
+    source = (Path(source_dir) if source_dir is not None else ROOT / "scripts" / "licenses") / name
+    data = _checked_license_bytes(source, expected_sha)
+    target = Path(cache) / name
+    if data is None:
+        return download(item["url"], target, expected_sha, 1024 * 1024)
+    for parent in (*reversed(target.parent.parents), target.parent):
+        try:
+            parent.mkdir(exist_ok=True)
+            info = parent.lstat()
+            if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise BuildError("License cache path is unsafe")
+        except OSError:
+            raise BuildError("License cache could not be written") from None
+    try:
+        info = target.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise BuildError("License cache target is unsafe")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix="license-", suffix=".part", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return target
 
 
@@ -652,7 +717,7 @@ def stage_bundle(work, manifest, app_contents, source, install_tools, bundle_mod
     model_cache = work / "cache" / "hand"
     model_cache.mkdir(parents=True, exist_ok=True)
     install_tools.download_model(model_cache)
-    supplements = [download(item["url"], work / "cache" / "licenses" / item["file"], item["sha256"], 1024 * 1024) for item in manifest["license_supplements"]]
+    supplements = [fetch_license_supplement(item, work / "cache" / "licenses") for item in manifest["license_supplements"]]
 
     stage = clean_dir(work / "stage", work)
     bundle = stage / manifest["bundle_name"]
