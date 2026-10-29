@@ -68,6 +68,24 @@ SECRET_PATTERNS = {
     "private key block": re.compile(rb"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),
 }
 SECRET_ENV = re.compile(r"(?i)(key|token|secret|passw|credential|auth)")
+PUBLIC_IDENTITY_LABELS = frozenset({"build home path", "build user name"})
+PUBLIC_BUILD_METADATA = {
+    "vendor/contourpy/util/_build_config.py": {
+        "sha256": "b7addabb5076eda418102e2be07d7dd82149c6bf7938602449ce71b6a95271c4",
+        "wheel_filename": "contourpy-1.4.0-cp314-cp314-win_amd64.whl",
+        "wheel_sha256": "181bea01bc742734ae672fa00c717d855dd35e1f029536406538c52e7b0cd73d",
+    },
+    "vendor/numpy/__config__.py": {
+        "sha256": "7484592aa3f8dc04c44d13ab7520d27429ee47b03090a49b6a6c7a221cf52130",
+        "wheel_filename": "numpy-2.5.4-cp314-cp314-win_amd64.whl",
+        "wheel_sha256": "2ca144f15135b6212a5c47b1e2aeca6e412f102f95a2d5d88d8aec77eb255de3",
+    },
+    "vendor/numpy-2.5.4.dist-info/DELVEWHEEL": {
+        "sha256": "c1184f36005d00b90e55c5bc411a501990b6f439d68cc17995ab3b5f05faada5",
+        "wheel_filename": "numpy-2.5.4-cp314-cp314-win_amd64.whl",
+        "wheel_sha256": "2ca144f15135b6212a5c47b1e2aeca6e412f102f95a2d5d88d8aec77eb255de3",
+    },
+}
 
 
 class BuildError(RuntimeError):
@@ -419,20 +437,51 @@ def audit_needles(extra=()):
     return encoded
 
 
-def scan_bytes(label, data, needles, findings):
+def reviewed_public_metadata(manifest):
+    """Require current wheel pins and staged member bytes to match the reviewed public hashes."""
+    pins = {wheel["filename"]: wheel["sha256"] for wheel in manifest["wheels"]}
+    if any(pins.get(item["wheel_filename"]) != item["wheel_sha256"] for item in PUBLIC_BUILD_METADATA.values()):
+        raise BuildError("Public build metadata wheel pins changed; review their exact bytes before building")
+    return {path: dict(item) for path, item in PUBLIC_BUILD_METADATA.items()}
+
+
+def public_metadata_provenance(metadata):
+    return [{"path": path, **item, "classification": "unchanged public wheel build metadata",
+             "eligible_identity_labels": sorted(PUBLIC_IDENTITY_LABELS)} for path, item in sorted(metadata.items())]
+
+
+def scan_bytes(label, data, needles, findings, *, public_metadata=None, classified=None):
+    reviewed = (public_metadata or {}).get(label)
+    if reviewed is not None and reviewed != PUBLIC_BUILD_METADATA.get(label):
+        findings.append(f"{label}: unreviewed public build metadata classification")
+        reviewed = None
+    exact_public = reviewed is not None and hashlib.sha256(data).hexdigest() == reviewed["sha256"]
+    if reviewed is not None and not exact_public:
+        findings.append(f"{label}: reviewed public build metadata bytes changed")
     lowered = data.lower()
+    collisions = set()
     for kind, needle in needles:
         if needle.lower() in lowered:
-            findings.append(f"{label}: contains {kind}")
+            if exact_public and kind in PUBLIC_IDENTITY_LABELS:
+                collisions.add(kind)
+            else:
+                findings.append(f"{label}: contains {kind}")
     for kind, pattern in SECRET_PATTERNS.items():
         if pattern.search(data):
             findings.append(f"{label}: matches {kind} pattern")
+    if collisions and classified is not None:
+        classified.append({"path": label, "sha256": reviewed["sha256"], "labels": sorted(collisions)})
 
 
-def audit_tree(bundle_root, needles):
+def audit_tree(bundle_root, needles, *, public_metadata=None, classified=None):
     """Return a list of problems: forbidden files, links, or private/credential-like content anywhere (including nested ZIPs)."""
+    if public_metadata and public_metadata != PUBLIC_BUILD_METADATA:
+        raise BuildError("Unreviewed public build metadata classification")
     findings = []
     bundle_root = Path(bundle_root)
+    for relative in public_metadata or {}:
+        if not (bundle_root / relative).is_file():
+            findings.append(f"{relative}: reviewed public build metadata is missing")
     for path in sorted(bundle_root.rglob("*")):
         relative = path.relative_to(bundle_root).as_posix()
         if path.is_symlink() or getattr(path.lstat(), "st_file_attributes", 0) & 0x400:
@@ -444,7 +493,7 @@ def audit_tree(bundle_root, needles):
         if reason:
             findings.append(f"{relative}: {reason}")
         data = path.read_bytes()
-        scan_bytes(relative, data, needles, findings)
+        scan_bytes(relative, data, needles, findings, public_metadata=public_metadata, classified=classified)
         if data[:4] == b"PK\x03\x04" and path.suffix.lower() in (".zip", ".whl", ".jar"):
             with zipfile.ZipFile(path) as nested:
                 for info in nested.infolist():
@@ -594,6 +643,7 @@ def write_text(path, text, crlf=False):
 
 def stage_bundle(work, manifest, app_contents, source, install_tools, bundle_module, extra_needles=(), launcher_content=None):
     work = Path(work)
+    public_metadata = reviewed_public_metadata(manifest)
     env = safe_env(clean_dir(work / "tmp", work))
     tools = tools_python(work, manifest, env)
     python_zip = fetch_python(work, manifest, tools, env)
@@ -663,14 +713,19 @@ def stage_bundle(work, manifest, app_contents, source, install_tools, bundle_mod
         "build_tools": manifest["build_tools"],
         "build_tools_lock_sha256": sha256_file(TOOLS_LOCK_PATH),
         "runtime_pip": "not used; packages are preinstalled in vendor",
+        "reviewed_public_build_metadata": public_metadata_provenance(public_metadata),
     }
     write_text(bundle / "BUILD-PROVENANCE.json", json.dumps(provenance, indent=2) + "\n")
     write_text(bundle / "README.txt", README_TEXT.format(python=pin["version"]), crlf=True)
 
-    findings = audit_tree(bundle, audit_needles(extra_needles))
+    classified = []
+    findings = audit_tree(bundle, audit_needles(extra_needles), public_metadata=public_metadata, classified=classified)
     if findings:
         raise BuildError("Bundle audit failed:\n  " + "\n  ".join(findings[:50]))
-    log(f"Audit passed for {sum(1 for p in bundle.rglob('*') if p.is_file())} files")
+    for item in public_metadata_provenance(public_metadata):
+        log(f"Reviewed public build metadata: {item['path']} SHA-256 {item['sha256']}")
+    log(f"Audit passed for {sum(1 for p in bundle.rglob('*') if p.is_file())} files; "
+        f"{len(classified)} exact public metadata files had classified home/user identity collisions")
     return bundle, provenance, notices
 
 
