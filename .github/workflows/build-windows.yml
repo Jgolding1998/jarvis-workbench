@@ -1,0 +1,112 @@
+name: Build Windows downloads
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Build source download from committed files
+        shell: python -I {0}
+        run: |
+          import hashlib
+          import os
+          from pathlib import Path, PurePosixPath, PureWindowsPath
+          import subprocess
+          import time
+          import zipfile
+
+          def git(*args):
+              return subprocess.check_output(['git', '-c', 'core.hooksPath=NUL', '-c', 'core.fsmonitor=false', *args],
+                                             creationflags=subprocess.CREATE_NO_WINDOW)
+
+          head = git('rev-parse', 'HEAD').decode('ascii').strip()
+          if head != os.environ['GITHUB_SHA']:
+              raise ValueError('Checkout does not match the workflow commit')
+          if git('show', 'HEAD:.gitattributes') != b'*.cmd text eol=crlf\n':
+              raise ValueError('Review source archive handling for changed Git attributes')
+          epoch = int(git('log', '-1', '--format=%ct').strip())
+          destination = Path(os.environ['RUNNER_TEMP']) / 'jarvis-artifacts'
+          destination.mkdir()
+          output = destination / 'Get-Jarvis-Workbench.zip'
+          entries = git('ls-tree', '-r', '-z', 'HEAD').split(b'\0')
+          expected_content = {}
+          with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              archive.comment = ('Source commit ' + head).encode('ascii')
+              for entry in sorted(filter(None, entries), key=lambda row: row.split(b'\t', 1)[1]):
+                  metadata, raw_path = entry.split(b'\t', 1)
+                  mode, kind, oid = metadata.split()
+                  path = raw_path.decode('utf-8')
+                  parts = PurePosixPath(path)
+                  if parts.name == '.gitattributes' and path != '.gitattributes':
+                      raise ValueError('Review source archive handling for nested Git attributes')
+                  if mode not in (b'100644', b'100755') or kind != b'blob' or parts.is_absolute() or '..' in parts.parts:
+                      raise ValueError('Source archive contains an unsupported entry')
+                  if '\\' in path or ':' in path or PureWindowsPath(path).is_reserved() or any(part.endswith((' ', '.')) for part in parts.parts):
+                      raise ValueError('Source archive contains a nonportable path')
+                  data = git('cat-file', 'blob', oid.decode('ascii'))
+                  if path.endswith('.cmd'):
+                      data = data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+                  info = zipfile.ZipInfo(path, time.gmtime(epoch)[:6])
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  info.create_system = 3
+                  info.external_attr = int(mode, 8) << 16
+                  archive.writestr(info, data, compresslevel=9)
+                  expected_content[path] = hashlib.sha256(data).hexdigest()
+          digest = hashlib.sha256(output.read_bytes()).hexdigest()
+          output.with_suffix('.zip.sha256').write_text(digest + '  ' + output.name + '\n', encoding='ascii')
+          with zipfile.ZipFile(output) as archive:
+              if archive.testzip() is not None:
+                  raise ValueError('Source archive integrity check failed')
+              if {name: hashlib.sha256(archive.read(name)).hexdigest() for name in archive.namelist()} != expected_content:
+                  raise ValueError('Source archive content differs from committed files')
+          print('Source commit: ' + head)
+          print('Source SHA-256: ' + digest)
+      - name: Build, audit and smoke-test portable Windows download
+        shell: pwsh
+        run: >-
+          python -I scripts/build_windows.py --source head
+          --work "$env:RUNNER_TEMP/jarvis-build"
+          --output "$env:RUNNER_TEMP/jarvis-artifacts/Jarvis-Windows.zip"
+      - name: Verify download checksums
+        shell: python -I {0}
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import zipfile
+          folder = Path(os.environ['RUNNER_TEMP']) / 'jarvis-artifacts'
+          expected = {'Get-Jarvis-Workbench.zip', 'Get-Jarvis-Workbench.zip.sha256',
+                      'Jarvis-Windows.zip', 'Jarvis-Windows.zip.sha256'}
+          if {entry.name for entry in folder.iterdir()} != expected:
+              raise ValueError('Unexpected download artifacts')
+          for name in ('Get-Jarvis-Workbench.zip', 'Jarvis-Windows.zip'):
+              path = folder / name
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if path.with_suffix('.zip.sha256').read_text().split()[0] != digest:
+                  raise ValueError('Download checksum does not match')
+              with zipfile.ZipFile(path) as archive:
+                  if archive.testzip() is not None:
+                      raise ValueError('Download archive integrity check failed')
+                  if name == 'Jarvis-Windows.zip':
+                      for manifest in ('Jarvis-Windows/BUILD-PROVENANCE.json', 'Jarvis-Windows/app/bundle-manifest.json'):
+                          source = json.loads(archive.read(manifest))['source']
+                          if source['commit'] != os.environ['GITHUB_SHA'] or source['dirty']:
+                              raise ValueError('Portable download does not match the workflow commit')
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: jarvis-windows-downloads
+          path: ${{ runner.temp }}/jarvis-artifacts/*
+          if-no-files-found: error
+          retention-days: 7

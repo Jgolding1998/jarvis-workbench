@@ -111,6 +111,8 @@ The suite covers the presence policy timing, invalid inputs, workbook contents, 
 
 Camera accuracy, microphone recognition, a physical Windows lock, opening Excel, and live hand tracking need manual checks on your own hardware. A successful Windows API result means the request started, not proof that it completed.
 
+Maintainers can run **Build Windows downloads** from the repository's Actions tab. It creates the source ZIP and portable Windows ZIP from the head of the selected branch or tag, checks pinned downloads and signatures, and runs the portable smoke tests on GitHub's Windows runner. The four ZIP and checksum files are retained as a build artifact for seven days. Checksums identify that run's files; ZIP bytes can differ across build hosts. Publishing a release is a separate step.
+
 ## Limits worth understanding
 
 OpenCV's bundled HOG detector expects visible people, usually with substantial body framing. A seated head-and-shoulders webcam view can be missed. Establish a reliable single-person observation before trusting the timer. This edition does not recognize individuals.
