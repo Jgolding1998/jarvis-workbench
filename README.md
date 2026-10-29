@@ -10,7 +10,7 @@ A local workstation assistant with hand gestures, a presence guard, and optional
 
 **Windows x64:** download **Jarvis-Windows.zip** and its checksum from the same release, verify SHA-256, and extract the folder. Double-click **Start-Jarvis-Windows.cmd**. Python, the device packages, and the hand model are included. No administrator account is needed.
 
-Choose your role, monthly budget, and existing tool from the three dropdowns. Review the recommendation, then choose **Install selected tools**. In the portable edition this checks the included dependencies. The source edition installs them into the project's `.venv`. **Open dashboard** starts the selected Windows feature idle, with real actions disarmed.
+Choose your role and existing tool from the dropdowns, then set your monthly AI allowance with the slider. Review the recommendation and choose **Install selected tools**. In the portable edition this checks the included dependencies. The source edition installs them into the project's `.venv`. **Open dashboard** starts the selected Windows feature idle, with real actions disarmed.
 
 AI chat is optional. If you choose a cloud provider, create your own API key on its official website and enter it in the local app. It is kept in Windows Credential Manager. The public website never asks for a key. Testing a connection sends one short request only after you confirm it and may use your provider credits.
 
@@ -60,7 +60,9 @@ The app has its own dashboard. It does not include the movie character's voice, 
 
 The local dashboard, presence guard, hand control, and offline voice have no subscription charge. At a $0 budget, setup suggests NVIDIA's no-cost evaluation access or an existing local Ollama installation. NVIDIA availability and limits depend on your account and the model; rate limits and busy periods can cause waiting. Local models use your hardware, memory, electricity, and disk space. Free does not always mean slower.
 
-Cloud APIs can charge for requests. The monthly dropdown is a planning preference, not an enforced billing limit. Set limits with the provider. Some chat subscriptions offer eligible API credits or other benefits; check your account rather than assuming a subscription includes API access. Jarvis does not purchase credits, create keys, or promise a fixed monthly bill.
+The slider sets a local allowance of $0 to $100. Before each OpenAI or Anthropic attempt, this installation reserves $0.01 from that month's allowance and refuses attempts when it is used up. The reservation stays after an error because the provider may still have processed the request. This is a conservative allowance, not a report of your actual bill. It persists across restarts and is shared by setup and the desktop app. At $0, paid requests stop before reading a key or contacting the provider. NVIDIA trial access and local Ollama do not consume this paid allowance.
+
+Set a provider spend limit too. Jarvis cannot control other apps, verify NVIDIA trial eligibility, or guarantee a provider's final invoice. The fixed-model pricing check expires after November 27, 2026; paid requests then pause until the app's reviewed pricing is updated. [OpenAI's hard-limit option](https://help.openai.com/en/articles/9186755-managing-projects-in-the-api-platform) can stop tracked spending, with a possible small enforcement delay. [Anthropic's spend limits](https://platform.claude.com/docs/en/api/rate-limits) provide a separate account control. Some chat subscriptions offer eligible API credits; check your account. Jarvis never purchases credits or creates keys.
 
 ## Use the dashboard
 

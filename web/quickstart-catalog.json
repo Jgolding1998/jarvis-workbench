@@ -1,77 +1,198 @@
 {
   "schema": "jarvis-quickstart-catalog/1",
-  "defaults": {"role": "office", "budget": 0, "existing": "none"},
+  "defaults": {
+    "role": "office",
+    "budget": 0,
+    "existing": "none"
+  },
   "release": {
     "windows_zip": "https://github.com/Jgolding1998/jarvis-workbench/releases/latest/download/Jarvis-Windows.zip",
     "status": "available",
-    "source_zip": "https://github.com/Jgolding1998/jarvis-workbench/archive/refs/heads/main.zip",
+    "source_zip": "https://github.com/Jgolding1998/jarvis-workbench/releases/latest/download/Get-Jarvis-Workbench.zip",
     "source_repo": "https://github.com/Jgolding1998/jarvis-workbench",
     "agent_guide": "https://github.com/Jgolding1998/jarvis-workbench/blob/main/docs/INSTALL_WITH_AGENT.md",
     "feedback": "https://github.com/Jgolding1998/Jgolding1998/issues/new?template=feedback.yml"
   },
   "roles": [
-    {"id": "developer", "label": "Coding and development", "features": ["hand"], "title": "Developer desk",
-     "summary": "Point and click by hand while your keyboard stays busy, with an AI helper for quick questions."},
-    {"id": "office", "label": "Office work and email", "features": ["camera"], "title": "Office desk",
-     "summary": "Ask Windows to lock when you step away, with an AI helper for drafts and summaries."},
-    {"id": "study", "label": "Study and research", "features": ["camera"], "title": "Study desk",
-     "summary": "Keep your notes private when you step away, with an AI helper for explanations."},
-    {"id": "creator", "label": "Creative and media work", "features": ["hand"], "title": "Creator desk",
-     "summary": "Steer the pointer by hand between tools, with an AI helper for ideas and captions."}
+    {
+      "id": "developer",
+      "label": "Coding and development",
+      "features": [
+        "hand"
+      ],
+      "title": "Developer desk",
+      "summary": "Point and click by hand while your keyboard stays busy, with an AI helper for quick questions."
+    },
+    {
+      "id": "office",
+      "label": "Office work and email",
+      "features": [
+        "camera"
+      ],
+      "title": "Office desk",
+      "summary": "Ask Windows to lock when you step away, with an AI helper for drafts and summaries."
+    },
+    {
+      "id": "study",
+      "label": "Study and research",
+      "features": [
+        "camera"
+      ],
+      "title": "Study desk",
+      "summary": "Keep your notes private when you step away, with an AI helper for explanations."
+    },
+    {
+      "id": "creator",
+      "label": "Creative and media work",
+      "features": [
+        "hand"
+      ],
+      "title": "Creator desk",
+      "summary": "Steer the pointer by hand between tools, with an AI helper for ideas and captions."
+    }
   ],
-  "budgets": [
-    {"id": 0, "label": "$0 a month"},
-    {"id": 10, "label": "Around $10 a month"},
-    {"id": 25, "label": "Around $25 a month"},
-    {"id": 50, "label": "Around $50 a month"}
-  ],
+  "budget": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+  },
   "existing": [
-    {"id": "none", "label": "None yet", "zero": "nvidia", "paid": "nvidia",
-     "zero_notes": ["nvidia_trial", "offline_core"], "paid_notes": ["nvidia_trial", "start_small"]},
-    {"id": "nvidia", "label": "NVIDIA API key", "zero": "nvidia", "paid": "nvidia",
-     "zero_notes": ["nvidia_trial", "offline_core"], "paid_notes": ["nvidia_trial", "nvidia_paid"]},
-    {"id": "openai", "label": "OpenAI API account", "zero": "nvidia", "paid": "openai",
-     "zero_notes": ["openai_zero", "chat_subscription", "nvidia_trial", "ollama_option"], "paid_notes": ["chat_subscription", "paid_usage"]},
-    {"id": "anthropic", "label": "Anthropic API account", "zero": "nvidia", "paid": "anthropic",
-     "zero_notes": ["anthropic_zero", "chat_subscription", "nvidia_trial", "ollama_option"], "paid_notes": ["chat_subscription", "paid_usage"]},
-    {"id": "ollama", "label": "Ollama on my computer", "zero": "ollama", "paid": "ollama",
-     "zero_notes": ["ollama_hardware", "offline_core"], "paid_notes": ["ollama_hardware"]}
+    {
+      "id": "none",
+      "label": "None yet",
+      "zero": "nvidia",
+      "paid": "nvidia",
+      "zero_notes": [
+        "nvidia_trial",
+        "offline_core"
+      ],
+      "paid_notes": [
+        "nvidia_trial",
+        "start_small"
+      ]
+    },
+    {
+      "id": "nvidia",
+      "label": "NVIDIA API key",
+      "zero": "nvidia",
+      "paid": "nvidia",
+      "zero_notes": [
+        "nvidia_trial",
+        "offline_core"
+      ],
+      "paid_notes": [
+        "nvidia_trial",
+        "nvidia_paid"
+      ]
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI API account",
+      "zero": "nvidia",
+      "paid": "openai",
+      "zero_notes": [
+        "openai_zero",
+        "chat_subscription",
+        "nvidia_trial",
+        "ollama_option"
+      ],
+      "paid_notes": [
+        "chat_subscription",
+        "paid_usage"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "label": "Anthropic API account",
+      "zero": "nvidia",
+      "paid": "anthropic",
+      "zero_notes": [
+        "anthropic_zero",
+        "chat_subscription",
+        "nvidia_trial",
+        "ollama_option"
+      ],
+      "paid_notes": [
+        "chat_subscription",
+        "paid_usage"
+      ]
+    },
+    {
+      "id": "ollama",
+      "label": "Ollama on my computer",
+      "zero": "ollama",
+      "paid": "ollama",
+      "zero_notes": [
+        "ollama_hardware",
+        "offline_core"
+      ],
+      "paid_notes": [
+        "ollama_hardware"
+      ]
+    }
   ],
   "providers": {
-    "nvidia": {"short": "NVIDIA", "name": "NVIDIA trial access", "kind": "cloud", "setup_url": "https://build.nvidia.com/meta/llama-3_3-70b-instruct",
+    "nvidia": {
+      "short": "NVIDIA",
+      "name": "NVIDIA trial access",
+      "kind": "cloud",
+      "setup_url": "https://build.nvidia.com/meta/llama-3_3-70b-instruct",
       "summary": "AI chat uses NVIDIA hosted models through a key you create.",
-      "step": "Sign in at build.nvidia.com, create an API key, and paste it into the setup page on your computer. Skip this to stay offline; everything except AI chat still works."},
-    "openai": {"short": "OpenAI", "name": "your OpenAI API account", "kind": "cloud", "setup_url": "https://platform.openai.com/api-keys",
+      "step": "Sign in at build.nvidia.com, create an API key, and paste it into the setup page on your computer. Skip this to stay offline; everything except AI chat still works."
+    },
+    "openai": {
+      "short": "OpenAI",
+      "name": "your OpenAI API account",
+      "kind": "cloud",
+      "setup_url": "https://platform.openai.com/api-keys",
       "summary": "AI chat uses your OpenAI API account and its usage billing.",
-      "step": "In your OpenAI API account, create a key and set a monthly spend limit there. Paste the key into the setup page on your computer."},
-    "anthropic": {"short": "Anthropic", "name": "your Anthropic API account", "kind": "cloud", "setup_url": "https://platform.claude.com/settings/keys",
+      "step": "In your OpenAI API account, create a key and set a monthly spend limit there. Paste the key into the setup page on your computer.",
+      "limit_url": "https://help.openai.com/en/articles/9186755-managing-projects-in-the-api-platform"
+    },
+    "anthropic": {
+      "short": "Anthropic",
+      "name": "your Anthropic API account",
+      "kind": "cloud",
+      "setup_url": "https://platform.claude.com/settings/keys",
       "summary": "AI chat uses your Anthropic API account and its usage billing.",
-      "step": "In the Claude Console, create an API key and set a spend limit there. Paste the key into the setup page on your computer."},
-    "ollama": {"short": "Ollama", "name": "Ollama on your computer", "kind": "local", "setup_url": "https://ollama.com/download", "model": "gemma3:4b",
+      "step": "In the Claude Console, create an API key and set a spend limit there. Paste the key into the setup page on your computer.",
+      "limit_url": "https://platform.claude.com/docs/en/api/rate-limits"
+    },
+    "ollama": {
+      "short": "Ollama",
+      "name": "Ollama on your computer",
+      "kind": "local",
+      "setup_url": "https://ollama.com/download",
+      "model": "gemma3:4b",
       "summary": "AI chat runs on your own computer with Ollama, no key needed.",
-      "step": "Install Ollama separately, run ollama pull gemma3:4b, and keep Ollama running for local chat."}
+      "step": "Install Ollama separately, run ollama pull gemma3:4b, and keep Ollama running for local chat."
+    }
   },
   "features": {
-    "camera": {"name": "Presence lock",
+    "camera": {
+      "name": "Presence lock",
       "note": "The presence lock uses your webcam to ask Windows to lock when you leave. Keep Windows auto-lock on as well.",
-      "step": "Choose Install selected tools to download the camera pieces. The camera stays off."},
-    "hand": {"name": "Hand control",
+      "step": "Choose Install selected tools to download the camera pieces. The camera stays off."
+    },
+    "hand": {
+      "name": "Hand control",
       "note": "Hand control needs a webcam and a one-time hand tracking download. Accuracy depends on your camera and lighting.",
-      "step": "Choose Install selected tools to download hand tracking. The camera and pointer stay off."}
+      "step": "Choose Install selected tools to download hand tracking. The camera and pointer stay off."
+    }
   },
   "notes": {
-    "nvidia_trial": "NVIDIA offers no-cost API access for trial and evaluation. Rate limits, queues and eligibility vary and can change, so replies may wait at busy times. Check NVIDIA's current terms.",
+    "nvidia_trial": "NVIDIA offers no-cost API access for trial and evaluation. Rate limits, queues and eligibility vary and can change, so replies may wait at busy times. Trial use does not draw on your Jarvis allowance; check NVIDIA's current terms.",
     "offline_core": "With no key at all, Jarvis still runs its core offline: dashboard, hand control and presence lock. Only AI chat needs a provider.",
     "start_small": "Your budget leaves room for a paid API later. Start with trial access and switch only if its limits get in your way.",
     "nvidia_paid": "Trial access is meant for evaluation. Ongoing or heavier use may need NVIDIA's paid terms; check them before relying on it.",
-    "openai_zero": "OpenAI API requests need available API credits or billing on your API account, and a $0 plan cannot count on future usage being covered. NVIDIA trial access or Ollama are suggested instead.",
-    "anthropic_zero": "Anthropic API requests need available API credits or billing on your Console account, and a $0 plan cannot count on future usage being covered. NVIDIA trial access or Ollama are suggested instead.",
+    "openai_zero": "OpenAI API requests need available API credits or billing on your API account, and a $0 plan cannot count on future usage being covered. At $0 Jarvis does not send paid OpenAI requests. NVIDIA trial access or Ollama are suggested instead.",
+    "anthropic_zero": "Anthropic API requests need available API credits or billing on your Console account, and a $0 plan cannot count on future usage being covered. At $0 Jarvis does not send paid Anthropic requests. NVIDIA trial access or Ollama are suggested instead.",
     "chat_subscription": "A ChatGPT or Claude chat subscription is separate from API access. Some plans may include eligible API credits; check your account instead of assuming they do.",
     "ollama_option": "Ollama runs models on your own computer with no usage bill. Choose Ollama above if you already have it.",
-    "ollama_hardware": "Ollama speed depends on your hardware. A recent graphics card can feel quick; a laptop without one runs small models on its processor and RAM, so expect slower replies from larger models.",
-    "paid_usage": "The provider bills each request. Set a spend limit in your provider account, because Jarvis does not enforce one."
+    "ollama_hardware": "Ollama speed depends on your hardware. A recent graphics card can feel quick; a laptop without one runs small models on its processor and RAM, so expect slower replies from larger models. Local chat does not draw on your Jarvis allowance.",
+    "paid_usage": "The provider bills each request. Jarvis stops paid requests when its local allowance is used, but only a hard spend limit in your provider account caps what you are actually charged."
   },
-  "budget_note": "Your monthly budget is a planning preference, not a billing limit. Prices are set by each provider and can change.",
+  "budget_note": "Your budget is a local allowance for paid AI requests on this Jarvis installation, not an invoice cap. Jarvis reserves $0.01 per paid attempt and stops when the allowance is used. Actual provider charges may differ, so also set a hard spend limit with your provider.",
   "steps": {
     "download": "Download the Jarvis Windows package and unzip it into a folder you own.",
     "start": "Open Start-Jarvis-Windows.cmd in the unzipped folder (Start-Jarvis.cmd if you use the source ZIP). Setup opens in your browser, on your own computer.",

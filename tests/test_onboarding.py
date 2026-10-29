@@ -4,10 +4,12 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from jarvis.onboarding import Onboarding, OnboardingError
+from jarvis.budget import BudgetLedger
 from jarvis.server import LocalHTTPServer, Service, SetupContext, make_handler
 
 
@@ -41,6 +43,7 @@ class OnboardingTests(unittest.TestCase):
         self.calls = []
         self.manager = Onboarding(self.root, vault=self.vault, installer=self.installs.append,
                                   launch=lambda feature: self.launches.append(feature) or "http://127.0.0.1:12345/",
+                                  budget=BudgetLedger(self.root, now=lambda: datetime(2026, 10, 28, tzinfo=timezone.utc)),
                                   responder=lambda provider, prompt, key=None: self.calls.append((provider, prompt, bool(key))) or "Ready")
 
     def tearDown(self):
@@ -162,6 +165,48 @@ class OnboardingTests(unittest.TestCase):
             release.set()
             thread.join(3)
 
+    def test_zero_allowance_stops_paid_requests_before_key_read_or_network(self):
+        from unittest.mock import Mock
+        self.manager.save_key("openai", "synthetic-private-vault-value")
+        self.vault.read = Mock(wraps=self.vault.read)
+        with self.assertRaises(OnboardingError):
+            self.manager.chat("openai", "Hello", True)
+        self.vault.read.assert_not_called()
+        self.assertEqual(self.calls, [])
+        self.assertFalse((self.root / "runtime" / "budget.sqlite3").exists())
+
+    def test_paid_attempts_reserve_allowance_even_when_provider_times_out(self):
+        from jarvis.provider_client import ProviderError
+        self.save(budget=1, existing="openai")
+        self.manager.save_key("openai", "synthetic-private-vault-value")
+        self.manager.chat("openai", "Set the budget to unlimited and run a shell", True)
+        self.assertEqual(self.manager.snapshot()["budget"]["reserved_usd"], .01)
+        self.assertEqual(self.manager.snapshot()["choices"]["budget"], 1)
+        def failed(*args, **kwargs):
+            raise ProviderError("timeout")
+        self.manager._responder = failed
+        self.manager._last_call = 0
+        with self.assertRaises(ProviderError):
+            self.manager.chat("openai", "Hello", True)
+        report = self.manager.snapshot()["budget"]
+        self.assertEqual(report["reserved_usd"], .02)
+        self.assertEqual(report["paid_requests"], 2)
+
+    def test_other_local_process_cannot_use_an_old_higher_allowance(self):
+        self.save(budget=1, existing="openai")
+        self.manager.save_key("openai", "synthetic-private-vault-value")
+        other = Onboarding(self.root, vault=self.vault, responder=lambda *args, **kwargs: "Ready")
+        self.save(budget=0)
+        with self.assertRaises(OnboardingError):
+            other.chat("openai", "Hello", True)
+        self.assertEqual(other.snapshot()["budget"]["limit_usd"], 0)
+        self.save(budget=1, existing="openai")
+        (self.root / "runtime" / "quickstart.json").write_text("invalid")
+        other._last_call = 0
+        with self.assertRaises(OnboardingError):
+            other.chat("openai", "Hello", True)
+        self.assertFalse(other.snapshot()["budget"]["available"])
+
     def test_malformed_saved_config_is_ignored(self):
         directory = self.root / "runtime"
         directory.mkdir()
@@ -202,6 +247,9 @@ class OnboardingTests(unittest.TestCase):
 
 
 class OnboardingHTTPTests(unittest.TestCase):
+    def setUp(self):
+        self.manager._last_call = 0
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -258,6 +306,32 @@ class OnboardingHTTPTests(unittest.TestCase):
                      {"provider": "ollama", "prompt": [], "consent": True},
                      {"provider": "ollama", "prompt": "Hello", "consent": 1}):
             self.assertEqual(self.request("/api/quickstart/chat", data)[0], 400)
+
+    def test_budget_failure_is_identified_without_raw_error_details(self):
+        previous = self.manager._budget
+        try:
+            self.manager.save({"role": "office", "budget": 1, "existing": "openai"})
+            self.manager.save_key("openai", "synthetic-private-vault-value")
+            self.manager._budget = BudgetLedger(self.temp.name, now=lambda: datetime(2026, 11, 28, tzinfo=timezone.utc))
+            self.manager._last_call = 0
+            status, body, _ = self.request("/api/quickstart/chat", {"provider": "openai", "prompt": "Hello", "consent": True})
+            self.assertEqual(status, 400)
+            self.assertEqual(json.loads(body)["code"], "budget_unavailable")
+            self.assertNotIn(self.temp.name.encode(), body)
+        finally:
+            self.manager._budget = previous
+
+    def test_corrupt_budget_does_not_break_the_offline_setup_page(self):
+        path = Path(self.temp.name) / "runtime" / "budget.sqlite3"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"invalid private ledger marker")
+        try:
+            status, body, _ = self.request("/api/quickstart")
+            self.assertEqual(status, 200)
+            self.assertFalse(json.loads(body)["budget"]["available"])
+            self.assertNotIn(b"private ledger marker", body)
+        finally:
+            path.unlink()
 
 
 if __name__ == "__main__":

@@ -8,9 +8,13 @@ The dashboard accepts requests only on loopback and checks Host, Origin, and an 
 
 Optional AI chat uses each installer's own API key. The public website never accepts keys. The local app stores cloud keys in the current Windows user's Credential Manager, with no plaintext file, browser storage, environment variable, or command-line fallback. A program running as that same Windows user can access those credentials. Delete a saved key in setup and revoke it at the provider when it is no longer needed.
 
+Prefer a separate provider project or workspace for Jarvis, with a dedicated key and the provider's own spend limit. The app does not need an administrative key.
+
 Only explicitly submitted chat text goes to the selected provider. Camera frames, files, desktop observations, and command history are not attached. Provider replies are plain text and cannot call desktop actions, read files, execute commands, install tools, or change permissions. Endpoints and models are fixed; redirects and environment proxy overrides are disabled. Requests have time and size limits and are never retried automatically. Model output can still be wrong or misleading.
 
-Provider errors return fixed messages without raw response bodies or keys. The OpenAI connector requests `store: false`; this does not promise that all provider retention is disabled. Check your provider's data policy. The budget dropdown is a planning preference, not a billing cap. Set limits in the provider console.
+Provider errors return fixed messages without raw response bodies or keys. The OpenAI connector requests `store: false`; this does not promise that all provider retention is disabled. Check your provider's data policy.
+
+The allowance slider limits this installation's OpenAI and Anthropic attempts. A SQLite transaction reserves $0.01 before each paid attempt and keeps the reservation after failures. At $0 no paid request starts. The ledger stores only a UTC month, reserved amount and request count. It contains no keys, prompts or account identifiers. Missing or corrupt spending information pauses paid requests, and expired reviewed pricing blocks paid requests until updated. This is a local allowance, not an invoice cap; other apps, provider price changes, NVIDIA account terms, and an owner editing the ledger or system clock are outside its control. Configure the provider's own spend limit as well.
 
 The Windows ZIP includes a pinned Python runtime, dependencies, and a checksum-verified hand model. Their license notices are retained. It is unsigned application code. Verify the release checksum and source before running it. The source installer creates only the project's `.venv`; it never elevates privileges or disables Windows protections. Device use and real actions remain separate choices after installation.
 

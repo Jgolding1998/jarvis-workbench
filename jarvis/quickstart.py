@@ -17,10 +17,11 @@ CHOICE_KEYS = ("role", "budget", "existing")
 FEATURES = ("camera", "hand")
 PROVIDER_KINDS = ("cloud", "local")
 RELEASE_STATES = ("pending", "available")
+REPRESENTATIVE_BUDGETS = (0, 1, 10, 25, 50, 100)
 
 ERROR_SHAPE = "Choose a role, a monthly budget and an existing tool."
 ERROR_ROLE = "Choose a role from the list."
-ERROR_BUDGET = "Choose a monthly budget from the list."
+ERROR_BUDGET = "Choose a whole-dollar monthly budget from 0 to 100."
 ERROR_EXISTING = "Choose an existing tool from the list."
 
 _cache: dict | None = None
@@ -53,16 +54,16 @@ def validate_catalog(data) -> None:
             raise ValueError("Quickstart catalog: " + message)
 
     need(isinstance(data, dict) and data.get("schema") == CATALOG_SCHEMA, "unsupported schema")
-    roles, budgets, existing = data.get("roles"), data.get("budgets"), data.get("existing")
+    roles, budget, existing = data.get("roles"), data.get("budget"), data.get("existing")
     providers, features, notes = data.get("providers"), data.get("features"), data.get("notes")
-    need(all(isinstance(x, list) and x for x in (roles, budgets, existing)), "choice lists missing")
+    need(all(isinstance(x, list) and x for x in (roles, existing)), "choice lists missing")
     need(all(isinstance(x, dict) for x in (providers, features, notes)), "tables missing")
-    for items in (roles, budgets, existing):
+    for items in (roles, existing):
         ids = [item.get("id") if isinstance(item, dict) else None for item in items]
         need(len(set(map(repr, ids))) == len(ids), "duplicate ids")
         need(all(isinstance(item, dict) and _text(item.get("label")) for item in items), "labels missing")
-    need(all(isinstance(b["id"], int) and not isinstance(b["id"], bool) and b["id"] >= 0 for b in budgets), "budgets must be whole dollars")
-    need(any(b["id"] == 0 for b in budgets), "a $0 budget is required")
+    need(isinstance(budget, dict) and sorted(budget) == ["max", "min", "step"], "budget range missing")
+    need(budget.get("min") == 0 and budget.get("step") == 1 and _whole(budget.get("max")) and 0 < budget["max"] <= 1000, "budget range must be whole dollars from 0")
     for role in roles:
         need(isinstance(role["id"], str) and _text(role.get("title")) and _text(role.get("summary")), "role text missing")
         need(isinstance(role.get("features"), list) and role["features"] and all(f in features and f in FEATURES for f in role["features"]), "role features unknown")
@@ -75,6 +76,7 @@ def validate_catalog(data) -> None:
         need(isinstance(provider, dict) and provider.get("kind") in PROVIDER_KINDS, "provider kind unknown")
         need(_https(provider.get("setup_url")) and all(_text(provider.get(k)) for k in ("short", "name", "summary", "step")), "provider fields missing")
         need("model" not in provider or _text(provider["model"]), "provider model invalid")
+        need("limit_url" not in provider or _https(provider["limit_url"]), "provider limit link invalid")
     for feature in features.values():
         need(isinstance(feature, dict) and all(_text(feature.get(k)) for k in ("name", "note", "step")), "feature text missing")
     need(all(_text(text) for text in notes.values()) and _text(data.get("budget_note")), "note text missing")
@@ -85,6 +87,10 @@ def validate_catalog(data) -> None:
     defaults = data.get("defaults")
     need(isinstance(defaults, dict) and sorted(defaults) == sorted(CHOICE_KEYS), "defaults missing")
     validate_choices(defaults, data)
+
+
+def _whole(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _find(items, wanted):
@@ -99,14 +105,21 @@ def validate_choices(data, catalog: dict | None = None) -> dict:
     role, budget, existing = data["role"], data["budget"], data["existing"]
     if not isinstance(role, str) or _find(catalog["roles"], role) is None:
         raise ValueError(ERROR_ROLE)
-    allowed = [item["id"] for item in catalog["budgets"]]
-    if isinstance(budget, str) and budget in [str(value) for value in allowed]:
-        budget = int(budget)
-    if isinstance(budget, bool) or not isinstance(budget, int) or budget not in allowed:
-        raise ValueError(ERROR_BUDGET)
+    budget = _budget(budget, catalog["budget"])
     if not isinstance(existing, str) or _find(catalog["existing"], existing) is None:
         raise ValueError(ERROR_EXISTING)
     return {"role": role, "budget": budget, "existing": existing}
+
+
+def _budget(value, limits) -> int:
+    """Whole dollars within the catalog range. Accepts canonical digit strings from form fields."""
+    if isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 4 and (value == "0" or not value.startswith("0")):
+        value = int(value)
+    elif isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if not _whole(value) or not limits["min"] <= value <= limits["max"]:
+        raise ValueError(ERROR_BUDGET)
+    return value
 
 
 def default_choices(catalog: dict | None = None) -> dict:
@@ -147,10 +160,10 @@ def recommend(choices, catalog: dict | None = None) -> dict:
     return plan
 
 
-def all_choices(catalog: dict | None = None):
-    """Every valid combination, in catalog order."""
+def all_choices(catalog: dict | None = None, budgets=REPRESENTATIVE_BUDGETS):
+    """Every role and existing tool at representative budgets, in catalog order."""
     catalog = catalog if catalog is not None else load_catalog()
     for role in catalog["roles"]:
-        for budget in catalog["budgets"]:
+        for budget in budgets:
             for existing in catalog["existing"]:
-                yield {"role": role["id"], "budget": budget["id"], "existing": existing["id"]}
+                yield {"role": role["id"], "budget": budget, "existing": existing["id"]}

@@ -236,7 +236,7 @@
   const CHOICE_ERRORS = {
     shape: "Choose a role, a monthly budget and an existing tool.",
     role: "Choose a role from the list.",
-    budget: "Choose a monthly budget from the list.",
+    budget: "Choose a whole-dollar monthly budget from 0 to 100.",
     existing: "Choose an existing tool from the list.",
   };
   const findId = (items, id) => items.find((item) => item.id === id) || null;
@@ -247,9 +247,9 @@
     let budget = data.budget;
     const existing = data.existing;
     if (typeof role !== "string" || !findId(catalog.roles, role)) throw new Error(CHOICE_ERRORS.role);
-    const allowed = ids(catalog.budgets);
-    if (typeof budget === "string" && allowed.map(String).includes(budget)) budget = Number(budget);
-    if (typeof budget !== "number" || !Number.isInteger(budget) || !allowed.includes(budget)) throw new Error(CHOICE_ERRORS.budget);
+    const limits = catalog.budget;
+    if (typeof budget === "string" && /^(0|[1-9][0-9]{0,3})$/.test(budget)) budget = Number(budget);
+    if (typeof budget !== "number" || !Number.isInteger(budget) || budget < limits.min || budget > limits.max) throw new Error(CHOICE_ERRORS.budget);
     if (typeof existing !== "string" || !findId(catalog.existing, existing)) throw new Error(CHOICE_ERRORS.existing);
     return {role, budget, existing};
   }
@@ -299,7 +299,25 @@
     const keys = isPlainObject(data.credentials) ? data.credentials : {};
     const credentials = {nvidia: keys.nvidia === true, openai: keys.openai === true, anthropic: keys.anthropic === true};
     const install = isPlainObject(data.install) && ["idle", "running", "ready", "error"].includes(data.install.state) ? data.install.state : "idle";
-    return {local: true, choices, credentials, install};
+    return {local: true, choices, credentials, install, budget: readBudget(data.budget)};
+  }
+
+  /* Local allowance reported by the service. Display only; the service enforces it. Anything malformed is dropped. */
+  function readBudget(data) {
+    const amount = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value < 1e6;
+    const day = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+    /* The service reports a broken ledger or config as unavailable. Its message is never shown. */
+    if (isPlainObject(data) && data.kind === "local_allowance" && data.available === false) return {available: false};
+    if (!isPlainObject(data) || data.kind !== "local_allowance" || typeof data.month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(data.month)) return null;
+    if (!["limit_usd", "reserved_usd", "remaining_usd", "reserve_per_request_usd"].every((key) => amount(data[key]))) return null;
+    if (!Number.isInteger(data.paid_requests) || data.paid_requests < 0) return null;
+    return {available: true, month: data.month, limit: data.limit_usd, reserved: data.reserved_usd, remaining: data.remaining_usd, paidRequests: data.paid_requests,
+      perRequest: data.reserve_per_request_usd, providerLimitRequired: data.provider_limit_required === true,
+      pricingChecked: day(data.pricing_checked) ? data.pricing_checked : "", validUntil: day(data.valid_until) ? data.valid_until : ""};
+  }
+
+  function budgetLabel(value) {
+    return value === 0 ? "$0, no paid AI" : "$" + value + " a month";
   }
 
   /* A saved choices file is untrusted: at most 2 KiB, no duplicate keys, exact fields, fixed error text. */
@@ -317,7 +335,7 @@
   }
 
   const api = {validateAnswers, buildPlan, defaultAnswers, readProviderCatalog, importedAnswers, isMobilePlanner, money,
-    validateChoices, recommend, choicesFromQuery, isLoopbackPage, isSafeLaunchUrl, readQuickstartState, importedChoices, IMPORT_LIMIT, IMPORT_ERROR, CHOICE_ERRORS, QUICKSTART_SCHEMA, CHOICES_SCHEMA};
+    validateChoices, recommend, choicesFromQuery, isLoopbackPage, isSafeLaunchUrl, readQuickstartState, readBudget, budgetLabel, importedChoices, IMPORT_LIMIT, IMPORT_ERROR, CHOICE_ERRORS, QUICKSTART_SCHEMA, CHOICES_SCHEMA};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => boot(api));
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -350,6 +368,12 @@ const MESSAGES = {
   copied: "Link copied. Open it on your Windows computer.",
   copyFailed: "Select the link above and copy it yourself.",
   savedJson: "Choices saved. The file holds your three answers only, nothing secret.",
+  meterNote: "Jarvis reserves $0.01 per paid attempt and stops when this installation's allowance is used. Actual provider charges may differ. Use a provider hard spend limit too.",
+  meterFree: "NVIDIA trial access and local Ollama chat do not draw on this allowance. NVIDIA trial use still depends on NVIDIA's own limits and eligibility.",
+  budgetUnavailable: "Paid AI paused: local allowance information is unavailable.",
+  budgetUnavailableNote: "Offline features, NVIDIA trial access and local Ollama chat still work. Restart Jarvis; if this stays, reinstall the latest version.",
+  budgetPaused: "Paid AI paused: this installation's local allowance is used up, past its review date or unavailable. Offline features and free providers still work.",
+  meterZero: "At $0 Jarvis sends no paid OpenAI or Anthropic requests.",
   importBad: "Choose a Jarvis choices file saved from this setup page (under 2 KB).",
   imported: "Saved choices loaded. Nothing was switched on.",
 };
@@ -358,7 +382,9 @@ function boot(api) {
   const $ = (id) => document.getElementById(id);
   const meta = document.querySelector('meta[name="jarvis-mode"]');
   const forced = meta ? meta.content : "auto";
-  const state = {catalog: null, choices: null, token: "", local: false, server: null, phone: false, busy: false, polls: 0};
+  const state = {catalog: null, choices: null, token: "", local: false, server: null, phone: false, busy: false, polls: 0, budgetTimer: 0};
+  const CONTROLS = ["role", "budget", "existing"];
+  const money = (value) => "$" + value.toFixed(2);
 
   function el(tag, attributes, children) {
     const node = document.createElement(tag);
@@ -383,13 +409,25 @@ function boot(api) {
     if (!api.isLoopbackPage(location, forced) || (!state.local && path !== "/api/session" && path !== "/api/quickstart")) throw new Error("not local");
     const options = body === undefined ? {cache: "no-store"} : {method: "POST", cache: "no-store", headers: {"Content-Type": "application/json", "X-Jarvis-Token": state.token}, body: JSON.stringify(body)};
     const response = await fetch(path, options);
-    if (!response.ok) throw new Error("request failed");
+    if (!response.ok) {
+      /* Only one error code is understood; any other body, including its text, is ignored. */
+      const failure = new Error("request failed");
+      try {
+        const body = await response.json();
+        failure.budget = response.status === 400 && body !== null && typeof body === "object" && body.code === "budget_unavailable";
+      } catch (error) { failure.budget = false; }
+      throw failure;
+    }
     return response.json();
   }
   const closed = () => document.body.classList.contains("closed");
   function lockSelects() {
     const locked = closed() || state.busy || Boolean(state.local && state.server && state.server.install === "running");
-    ["role", "budget", "existing"].forEach((id) => { $(id).disabled = locked; });
+    const focused = document.activeElement && CONTROLS.includes(document.activeElement.id) ? document.activeElement.id : state.refocus;
+    CONTROLS.forEach((id) => { $(id).disabled = locked; });
+    /* Disabling blurs the control; give keyboard focus back once it is usable again. */
+    state.refocus = locked ? focused || "" : "";
+    if (!locked && focused && document.activeElement !== $(focused)) $(focused).focus({preventScroll: true});
   }
   /* One local mutation at a time: the dropdowns and the triggering button stay disabled until it settles. */
   async function act(button, work) {
@@ -414,7 +452,7 @@ function boot(api) {
     const catalog = state.catalog;
     const plan = api.recommend(state.choices, catalog);
     $("role").value = plan.choices.role;
-    $("budget").value = String(plan.choices.budget);
+    showBudget(plan.choices.budget);
     $("existing").value = plan.choices.existing;
     $("plan").hidden = false;
     $("plan-title").textContent = plan.title;
@@ -431,8 +469,44 @@ function boot(api) {
     $("provider-link").href = plan.setup_url;
     $("provider-link").textContent = provider(plan).short + " setup page";
     $("handoff-link").textContent = handoffLink(plan.choices);
+    renderAllowance(plan);
     if (state.local) renderLocal(plan);
     lockSelects();
+  }
+
+  function showBudget(value) {
+    $("budget").value = String(value);
+    $("budget-value").textContent = "$" + value;
+    $("budget").setAttribute("aria-valuetext", api.budgetLabel(value));
+    $("budget").style.setProperty("--fill", (value / state.catalog.budget.max * 100) + "%");
+  }
+
+  function renderAllowance(plan) {
+    const info = provider(plan);
+    $("limit-help").hidden = !info.limit_url;
+    if (info.limit_url) {
+      $("limit-link").href = info.limit_url;
+      $("limit-link").textContent = "Set a hard spend limit with " + info.short;
+    }
+    const budget = state.local && state.server ? state.server.budget : null;
+    $("budget-meter").hidden = !budget;
+    if (!budget) return;
+    $("meter-bar").hidden = !budget.available;
+    $("meter-month").hidden = !budget.available;
+    $("budget-meter").classList.toggle("paused", !budget.available);
+    if (!budget.available) {
+      $("meter-text").textContent = MESSAGES.budgetUnavailable;
+      $("meter-note").textContent = MESSAGES.budgetUnavailableNote;
+      return;
+    }
+    $("meter-text").textContent = money(budget.reserved) + " reserved of " + money(budget.limit) + ", " + money(budget.remaining) + " left, "
+      + budget.paidRequests + " paid attempt" + (budget.paidRequests === 1 ? "" : "s");
+    $("meter-month").textContent = budget.month;
+    $("meter-bar").max = Math.max(budget.limit, 0.01);
+    $("meter-bar").value = Math.min(budget.reserved, Math.max(budget.limit, 0.01));
+    const extra = info.kind === "local" || plan.provider === "nvidia" ? MESSAGES.meterFree : budget.limit === 0 ? MESSAGES.meterZero : "";
+    const review = budget.validUntil ? " Pricing assumptions " + (budget.pricingChecked ? "checked " + budget.pricingChecked + ", " : "") + "due for review " + budget.validUntil + "; update Jarvis after that date." : "";
+    $("meter-note").textContent = MESSAGES.meterNote + (extra ? " " + extra : "") + review;
   }
 
   function handoffLink(choices) {
@@ -505,10 +579,25 @@ function boot(api) {
     }
   }
 
+  function formChoices() {
+    return api.validateChoices({role: $("role").value, budget: $("budget").value, existing: $("existing").value}, state.catalog);
+  }
+
+  /* The slider previews instantly; in local mode it saves once it rests, through the same serialized save. */
+  function slide(event) {
+    if (event.target.id !== "budget") return;
+    clearTimeout(state.budgetTimer);
+    if ($("budget").disabled) { render(); return; }
+    $("budget-value").textContent = "$" + $("budget").value;
+    if (!state.local) { choose(); return; }
+    $("budget").setAttribute("aria-valuetext", api.budgetLabel(Number($("budget").value)));
+    state.budgetTimer = setTimeout(choose, 450);
+  }
+
   async function choose() {
     let next;
     try {
-      next = api.validateChoices({role: $("role").value, budget: $("budget").value, existing: $("existing").value}, state.catalog);
+      next = formChoices();
     } catch (error) {
       status(error.message, true);
       render();
@@ -544,6 +633,11 @@ function boot(api) {
     });
   }
 
+  /* Paid attempts reserve allowance even when they fail, so re-read the service state afterwards. */
+  async function refresh() {
+    try { applyServer(await localJson("/api/quickstart")); } catch (error) { /* keep the last known state */ }
+  }
+
   function needConsent() {
     if ($("consent").checked) return false;
     status(MESSAGES.consent, true);
@@ -575,7 +669,8 @@ function boot(api) {
       try {
         await localJson("/api/quickstart/test", {provider: plan.provider, consent: true});
         status(MESSAGES.tested);
-      } catch (error) { status(MESSAGES.test, true); }
+      } catch (error) { status(error.budget ? MESSAGES.budgetPaused : MESSAGES.test, true); }
+      await refresh();
     },
     async chat() {
       if (needConsent()) return;
@@ -590,11 +685,15 @@ function boot(api) {
         status("");
       } catch (error) {
         $("reply").hidden = true;
-        status(MESSAGES.chat, true);
+        status(error.budget ? MESSAGES.budgetPaused : MESSAGES.chat, true);
       }
+      await refresh();
     },
     async install() {
-      if (!(await commit(state.choices))) return;
+      clearTimeout(state.budgetTimer);
+      let current = state.choices;
+      try { current = formChoices(); } catch (error) { current = state.choices; }
+      if (!(await commit(current))) return;
       try {
         applyServer(await localJson("/api/quickstart/install", {consent: true}));
         status("");
@@ -647,7 +746,8 @@ function boot(api) {
     if (!button || !state.choices || !own(actions, button.dataset.action)) return;
     act(button, () => actions[button.dataset.action](button));
   });
-  $("choices").addEventListener("change", choose);
+  $("choices").addEventListener("change", (event) => { if (event.target.id === "budget") slide(event); else choose(); });
+  $("choices").addEventListener("input", slide);
   $("choices").addEventListener("submit", (event) => event.preventDefault());
   $("key-form").addEventListener("submit", saveKey);
   $("import-choices").addEventListener("change", () => {
@@ -689,7 +789,7 @@ function boot(api) {
       state.catalog = await response.json();
       if (state.catalog.schema !== api.QUICKSTART_SCHEMA) throw new Error("catalog schema");
       fillSelect("role", state.catalog.roles);
-      fillSelect("budget", state.catalog.budgets);
+      CONTROLS.slice(1, 2).forEach((id) => ["min", "max", "step"].forEach((key) => $(id).setAttribute(key, String(state.catalog.budget[key]))));
       fillSelect("existing", state.catalog.existing);
       state.choices = api.validateChoices(state.catalog.defaults, state.catalog);
       links(state.catalog.release);

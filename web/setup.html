@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="jarvis-mode" content="auto">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
-<meta name="description" content="Set up Jarvis in three choices: what you use your computer for, a monthly budget, and the AI account you already have.">
+<meta name="description" content="Set up Jarvis in three choices: what you use your computer for, a monthly AI budget, and the AI account you already have.">
+<meta name="theme-color" content="#01070a">
 <title>Set up Jarvis</title>
 <link rel="icon" href="favicon.svg">
 <link rel="stylesheet" href="setup.css">
@@ -14,27 +15,59 @@
 <body>
 <div class="shell">
   <header class="top">
-    <span class="brand"><span class="mark" aria-hidden="true">J</span><span>jarvis<span class="light">workbench</span></span></span>
+    <span class="brand">
+      <svg class="mark" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 3"/><circle cx="20" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="4.5" fill="currentColor"/></svg>
+      <span>JARVIS<span class="light"> WORKBENCH</span></span>
+    </span>
     <span id="mode-badge" class="badge">LOADING</span>
   </header>
 
   <main id="main" tabindex="-1">
     <noscript><p class="card">This setup page needs JavaScript. The written guide is in docs/INSTALL_WITH_AGENT.md in the source repository.</p></noscript>
     <section class="intro">
-      <p class="eyebrow">SET UP IN THREE CHOICES</p>
-      <h1>Set up Jarvis</h1>
-      <p class="lead">Answer three questions. You get one recommended setup and clear next steps. Nothing installs or switches on by itself.</p>
+      <div>
+        <p class="eyebrow">SETUP / THREE CHOICES</p>
+        <h1>Set up Jarvis</h1>
+        <p class="lead">Pick what you use your computer for, an AI budget and the AI account you already have. Jarvis recommends one setup. Nothing installs or switches on by itself.</p>
+      </div>
+      <svg class="orb" viewBox="0 0 240 240" aria-hidden="true" focusable="false">
+        <defs>
+          <radialGradient id="orb-core" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#a5f8ff"/><stop offset=".35" stop-color="#25e7ff"/><stop offset="1" stop-color="#0b94aa" stop-opacity="0"/></radialGradient>
+        </defs>
+        <circle cx="120" cy="120" r="112" fill="none" stroke="#0c3440" stroke-width="1"/>
+        <circle cx="120" cy="120" r="104" fill="none" stroke="#25e7ff" stroke-width="1.5" stroke-dasharray="2 6" opacity=".7"/>
+        <path d="M120 20a100 100 0 0 1 86.6 50" fill="none" stroke="#25e7ff" stroke-width="3" stroke-linecap="round"/>
+        <path d="M33.4 170a100 100 0 0 1-13.4-50" fill="none" stroke="#ffb84d" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="120" cy="120" r="84" fill="none" stroke="#0c3440" stroke-width="10"/>
+        <circle cx="120" cy="120" r="84" fill="none" stroke="#25e7ff" stroke-width="10" stroke-dasharray="30 14" opacity=".55"/>
+        <circle cx="120" cy="120" r="66" fill="none" stroke="#25e7ff" stroke-width="1" opacity=".8"/>
+        <g stroke="#25e7ff" stroke-width="1.5" opacity=".9"><path d="M120 46v10M120 184v10M46 120h10M184 120h10M68 68l7 7M165 165l7 7M68 172l7-7M165 75l7-7"/></g>
+        <circle cx="120" cy="120" r="48" fill="none" stroke="#a5f8ff" stroke-width="2"/>
+        <circle cx="120" cy="120" r="44" fill="url(#orb-core)"/>
+        <circle cx="120" cy="120" r="16" fill="#e6fdff"/>
+      </svg>
     </section>
 
-    <form id="choices" class="card choices" novalidate>
+    <form id="choices" class="card hud choices" novalidate>
+      <p class="panel-no" aria-hidden="true">01 / PROFILE</p>
       <div class="field">
         <label for="role">I mainly use my computer for</label>
         <select id="role" name="role"></select>
       </div>
-      <div class="field">
-        <label for="budget">Monthly budget for AI</label>
-        <select id="budget" name="budget" aria-describedby="budget-hint"></select>
-        <p id="budget-hint" class="hint">A planning preference, not a billing limit.</p>
+      <div class="field budget-field">
+        <div class="budget-head">
+          <label for="budget">Monthly AI budget</label>
+          <output id="budget-value" for="budget" class="budget-value">$0</output>
+        </div>
+        <input id="budget" name="budget" type="range" min="0" max="100" step="1" value="0" aria-describedby="budget-hint">
+        <div class="ticks" aria-hidden="true"><span>$0</span><span>$50</span><span>$100</span></div>
+        <p id="budget-hint" class="hint">A local allowance for paid AI on this computer, not an invoice cap. $0 means no paid AI requests.</p>
+        <div id="budget-meter" class="meter-box" hidden>
+          <div class="meter-row"><span id="meter-text"></span><span id="meter-month" class="mono"></span></div>
+          <meter id="meter-bar" min="0" max="1" value="0" aria-label="Allowance reserved this month"></meter>
+          <p id="meter-note" class="hint"></p>
+        </div>
+        <p id="limit-help" class="hint" hidden><a id="limit-link" href="#" target="_blank" rel="noopener noreferrer"></a></p>
       </div>
       <div class="field">
         <label for="existing">AI account I already have</label>
@@ -45,8 +78,8 @@
     <p id="notice" class="notice" role="status" hidden></p>
 
     <div class="layout">
-      <section id="plan" class="card plan" aria-labelledby="plan-title" hidden>
-        <p class="eyebrow">RECOMMENDED FOR YOU</p>
+      <section id="plan" class="card hud plan" aria-labelledby="plan-title" hidden>
+        <p class="panel-no" aria-hidden="true">02 / RECOMMENDED</p>
         <h2 id="plan-title"></h2>
         <p id="plan-summary" class="summary"></p>
         <ul id="plan-chips" class="chips" aria-label="What this plan uses"></ul>
@@ -61,7 +94,8 @@
       </section>
 
       <div class="side">
-        <section id="get" class="card" aria-labelledby="get-title" hidden>
+        <section id="get" class="card hud" aria-labelledby="get-title" hidden>
+          <p class="panel-no" aria-hidden="true">03 / GET JARVIS</p>
           <h2 id="get-title">Get Jarvis for Windows</h2>
           <a id="download" class="button primary" href="#" rel="noopener noreferrer" hidden>Download for Windows (ZIP)</a>
           <span id="download-pending" class="button pending" hidden>Windows download coming soon</span>
@@ -70,7 +104,8 @@
           <p class="quiet"><a id="source-zip" href="#" rel="noopener noreferrer">Source ZIP</a><span aria-hidden="true"> · </span><a class="agent-guide" href="#" target="_blank" rel="noopener noreferrer">Install with an AI agent</a></p>
         </section>
 
-        <section id="phone" class="card" aria-labelledby="phone-title" hidden>
+        <section id="phone" class="card hud" aria-labelledby="phone-title" hidden>
+          <p class="panel-no" aria-hidden="true">03 / HANDOFF</p>
           <h2 id="phone-title">Continue on your computer</h2>
           <p class="hint">A phone can plan and practice only. Installing Jarvis, the camera, mouse control and Windows lock all need a Windows computer.</p>
           <code id="handoff-link" class="link-box"></code>
@@ -79,7 +114,8 @@
           <p class="quiet"><a href="index.html#practice">Practice the hand moves</a></p>
         </section>
 
-        <section id="local" class="card" aria-labelledby="local-title" hidden>
+        <section id="local" class="card hud" aria-labelledby="local-title" hidden>
+          <p class="panel-no" aria-hidden="true">03 / THIS COMPUTER</p>
           <h2 id="local-title">On this computer</h2>
           <div id="key-box" class="key-box" hidden>
             <p><a id="key-help" href="#" target="_blank" rel="noopener noreferrer">Get an API key</a></p>
@@ -98,8 +134,8 @@
           <button id="launch" class="button" type="button" data-action="launch">Open dashboard</button>
           <p class="hint">Available once the selected tools are installed. It opens with the camera, mouse control and Windows lock off.</p>
           <details id="ai-box" class="more" hidden>
-            <p class="hint">AI replies are text only. They cannot operate your computer or fetch live weather.</p>
             <summary>Try AI chat (optional)</summary>
+            <p class="hint">AI replies are text only. They cannot operate your computer or fetch live weather.</p>
             <label class="check"><input id="consent" type="checkbox"> Allow a short request that may use credits or trial quota</label>
             <button class="button ghost small" type="button" data-action="test">Test connection</button>
             <label for="prompt">Question</label>
@@ -117,7 +153,7 @@
   </main>
 
   <footer class="foot">
-    <a id="feedback" href="#" target="_blank" rel="noopener noreferrer">Feedback</a>
+    <a id="feedback" href="#" target="_blank" rel="noopener noreferrer">Feedback, ideas and problems</a>
     <a class="agent-guide" href="#" target="_blank" rel="noopener noreferrer">Install with an AI agent</a>
     <a id="source-repo" href="#" target="_blank" rel="noopener noreferrer">Source</a>
     <a id="privacy-link" href="privacy.html" hidden>Privacy</a>

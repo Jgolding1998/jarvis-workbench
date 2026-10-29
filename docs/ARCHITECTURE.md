@@ -37,7 +37,7 @@ On Windows, an Esc watcher polls `GetAsyncKeyState` only while hand control runs
 
 ## Setup wizard boundary
 
-`web/setup.html`, `setup.js`, `setup.css`, and `quickstart-catalog.json` provide the three-dropdown setup. `jarvis/quickstart.py` mirrors the browser recommendation and parity tests compare every valid combination. Hosted mode fetches static assets beside the page and never calls a loopback address or collects an API key.
+`web/setup.html`, `setup.js`, `setup.css`, and `quickstart-catalog.json` provide role and tool dropdowns plus a monthly allowance slider. `jarvis/quickstart.py` mirrors the browser recommendation and parity tests compare plans at supported budget boundaries. Hosted mode fetches static assets beside the page and never calls a loopback address or collects an API key.
 
 Local setup adds write-only key storage, explicit package installation, and a desktop launch route. `jarvis/onboarding.py` saves only the three choices in `runtime/quickstart.json` using atomic replacement. The installer has one background job; consent is required and choices cannot change during installation. Complete portable packages use their included dependencies. Source installations use the existing reviewed package installer and a project `.venv`. A fixed subprocess command opens the selected desktop feature idle. Its arguments never come from arbitrary user text. Legacy planner endpoints remain validated for existing clients.
 
@@ -56,6 +56,8 @@ This boundary protects against an unrelated website trying to operate the local 
 Camera frames and microphone blocks exist in memory and are discarded. The activity list holds the most recent 40 generic events and resets on restart. Choices and an explicitly enabled synthetic workbook use the ignored `runtime/` directory. API keys use the current user's Windows Credential Manager, with no plaintext file fallback. The public site has no credential fields.
 
 AI requests form a separate text-only path. `provider_client.py` pins provider URLs and models, refuses redirects and proxy overrides, and bounds DNS work, response size, and total request time. `onboarding.py` permits one request at a time and requires explicit consent. No model output is parsed as a command or passed to `Actions`. The selected provider receives only the submitted prompt, without frames, files, or desktop state.
+
+Before a paid attempt, setup re-reads the validated allowance from disk so a second local process cannot keep an old, higher setting. `budget.py` reserves $0.01 inside a SQLite transaction shared by processes. It stores only UTC month, reserved amount and attempt count; failures are not refunded. A $0 allowance, exhausted allowance, corrupt ledger, or expired pricing check prevents a paid request. This bounds the local reserved allowance, rather than guaranteeing an invoice or controlling other applications.
 
 The source simulator uses only the standard library. The portable edition includes pinned third-party device packages and a verified hand model, with retained license notices; no Vosk voice model is included. The HOG people detector has substantial false-positive and false-negative risk.
 

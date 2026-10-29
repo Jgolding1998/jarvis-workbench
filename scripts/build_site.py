@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-PAGES = ("index.html", "site.css", "site.js", "privacy.html", "dashboard-preview.png", "favicon.svg")
+PAGES = ("index.html", "site.css", "site.js", "privacy.html", "dashboard-preview.png", "favicon.svg", "_headers")
 SETUP = ("setup.html", "setup.js", "setup.css", "quickstart-catalog.json")
 
 

@@ -25,7 +25,7 @@ def plan(role="office", budget=0, existing="none"):
 class CatalogTests(unittest.TestCase):
     def test_three_dropdowns_have_exactly_the_agreed_options(self):
         self.assertEqual([r["id"] for r in CATALOG["roles"]], ["developer", "office", "study", "creator"])
-        self.assertEqual([b["id"] for b in CATALOG["budgets"]], [0, 10, 25, 50])
+        self.assertEqual(CATALOG["budget"], {"min": 0, "max": 100, "step": 1})
         self.assertEqual([e["id"] for e in CATALOG["existing"]], ["none", "nvidia", "openai", "anthropic", "ollama"])
         self.assertEqual(quickstart.default_choices(), {"role": "office", "budget": 0, "existing": "none"})
 
@@ -36,6 +36,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(release["agent_guide"], "https://github.com/Jgolding1998/jarvis-workbench/blob/main/docs/INSTALL_WITH_AGENT.md")
         self.assertEqual(release["feedback"], "https://github.com/Jgolding1998/Jgolding1998/issues/new?template=feedback.yml")
         self.assertNotEqual(release["source_zip"], release["windows_zip"])
+        self.assertEqual(release["source_zip"], "https://github.com/Jgolding1998/jarvis-workbench/releases/latest/download/Get-Jarvis-Workbench.zip")
 
     def test_malformed_catalogs_are_rejected(self):
         def broken(change):
@@ -51,7 +52,11 @@ class CatalogTests(unittest.TestCase):
             lambda d: d["providers"]["nvidia"].update(setup_url="http://build.nvidia.com/"),
             lambda d: d["release"].update(status="live"),
             lambda d: d["release"].update(feedback="javascript:alert(1)"),
-            lambda d: d["budgets"].pop(0),
+            lambda d: d["budget"].update(min=1),
+            lambda d: d["budget"].update(max=10.5),
+            lambda d: d["budget"].update(step=5),
+            lambda d: d.pop("budget"),
+            lambda d: d["providers"]["openai"].update(limit_url="http://example.org"),
             lambda d: d.update(defaults={"role": "admin", "budget": 0, "existing": "none"}),
             lambda d: d["notes"].update(nvidia_trial="Fast " + chr(0x2014) + " and free"),
         ]
@@ -66,6 +71,11 @@ class CatalogTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_budget_is_any_whole_dollar_in_range(self):
+        for value in (0, 1, 7, 37, 99, 100, "0", "100", 25.0):
+            with self.subTest(value=value):
+                self.assertEqual(quickstart.validate_choices({"role": "office", "budget": value, "existing": "none"})["budget"], int(value))
+
     def test_canonical_choices(self):
         self.assertEqual(quickstart.validate_choices({"role": "study", "budget": "25", "existing": "ollama"}),
                          {"role": "study", "budget": 25, "existing": "ollama"})
@@ -80,7 +90,11 @@ class ValidationTests(unittest.TestCase):
             ({"role": "office", "budget": 0, "existing": "none", "key": private}, quickstart.ERROR_SHAPE),
             ({"role": private, "budget": 0, "existing": "none"}, quickstart.ERROR_ROLE),
             ({"role": ["office"], "budget": 0, "existing": "none"}, quickstart.ERROR_ROLE),
-            ({"role": "office", "budget": 5, "existing": "none"}, quickstart.ERROR_BUDGET),
+            ({"role": "office", "budget": 101, "existing": "none"}, quickstart.ERROR_BUDGET),
+            ({"role": "office", "budget": -1, "existing": "none"}, quickstart.ERROR_BUDGET),
+            ({"role": "office", "budget": "101", "existing": "none"}, quickstart.ERROR_BUDGET),
+            ({"role": "office", "budget": " 5", "existing": "none"}, quickstart.ERROR_BUDGET),
+            ({"role": "office", "budget": float("nan"), "existing": "none"}, quickstart.ERROR_BUDGET),
             ({"role": "office", "budget": True, "existing": "none"}, quickstart.ERROR_BUDGET),
             ({"role": "office", "budget": 10.5, "existing": "none"}, quickstart.ERROR_BUDGET),
             ({"role": "office", "budget": "010", "existing": "none"}, quickstart.ERROR_BUDGET),
@@ -99,7 +113,8 @@ class ValidationTests(unittest.TestCase):
 class RecommendationTests(unittest.TestCase):
     def test_every_combination_has_the_contracted_shape(self):
         combos = list(quickstart.all_choices())
-        self.assertEqual(len(combos), 80)
+        self.assertEqual(len(combos), 4 * 6 * 5)
+        self.assertEqual(sorted({c["budget"] for c in combos}), [0, 1, 10, 25, 50, 100])
         for choices in combos:
             with self.subTest(choices=choices):
                 result = quickstart.recommend(choices)
@@ -124,18 +139,19 @@ class RecommendationTests(unittest.TestCase):
             text = " ".join(plan(existing=existing)["tradeoffs"])
             self.assertIn(name + " API requests need available API credits or billing", text)
             self.assertIn("cannot count on future usage", text)
+            self.assertIn("At $0 Jarvis does not send paid " + name + " requests", text)
             self.assertIn("NVIDIA trial access or Ollama", text)
             self.assertIn("eligible API credits", text)
             self.assertIn("instead of assuming", text)
 
     def test_paid_budget_rules(self):
-        for budget in (10, 25, 50):
+        for budget in (1, 10, 25, 50, 100):
             self.assertEqual(plan(budget=budget, existing="openai")["provider"], "openai")
             self.assertEqual(plan(budget=budget, existing="anthropic")["provider"], "anthropic")
             self.assertEqual(plan(budget=budget, existing="nvidia")["provider"], "nvidia")
             self.assertEqual(plan(budget=budget, existing="ollama")["provider"], "ollama")
             self.assertEqual(plan(budget=budget, existing="none")["provider"], "nvidia")
-            self.assertIn("Jarvis does not enforce one", " ".join(plan(budget=budget, existing="openai")["tradeoffs"]))
+            self.assertIn("only a hard spend limit", " ".join(plan(budget=budget, existing="openai")["tradeoffs"]))
 
     def test_local_model_explains_hardware_without_calling_it_slow(self):
         result = plan(existing="ollama")
@@ -178,6 +194,9 @@ class JavaScriptParityTests(unittest.TestCase):
                  {"role": "admin", "budget": 0, "existing": "none"}, {"role": "office", "budget": 5, "existing": "none"},
                  {"role": "office", "budget": True, "existing": "none"}, {"role": "office", "budget": 10.5, "existing": "none"},
                  {"role": "office", "budget": "010", "existing": "none"}, {"role": "office", "budget": 0, "existing": "gpt"},
+                 {"role": "office", "budget": 101, "existing": "none"}, {"role": "office", "budget": -1, "existing": "none"},
+                 {"role": "office", "budget": 1, "existing": "none"}, {"role": "office", "budget": 100, "existing": "openai"},
+                 {"role": "office", "budget": "37", "existing": "none"}, {"role": "office", "budget": "1e2", "existing": "none"},
                  {"role": "office", "budget": "50", "existing": "anthropic"}]
         script = ("const api=require(process.argv[1]);let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{"
                   "const {catalog,cases}=JSON.parse(s);process.stdout.write(JSON.stringify(cases.map(c=>{try{return {ok:api.validateChoices(c,catalog)}}"
@@ -197,6 +216,24 @@ class JavaScriptParityTests(unittest.TestCase):
         text = '{"__proto__": {"polluted": true}, "role": "office", "budget": 0}'
         self.assertEqual(self.run_node(script, {"catalog": CATALOG, "text": text}), [quickstart.ERROR_SHAPE, True])
 
+    def test_allowance_reader_keeps_only_valid_service_data(self):
+        good = {"month": "2026-10", "limit_usd": 25, "reserved_usd": 0.12, "remaining_usd": 24.88, "paid_requests": 12,
+                "reserve_per_request_usd": 0.01, "kind": "local_allowance", "provider_limit_required": True,
+                "pricing_checked": "2026-10-28", "valid_until": "2026-11-27"}
+        cases = [good, None, {**good, "kind": "invoice"}, {**good, "month": "2026-13"}, {**good, "limit_usd": -1},
+                 {**good, "paid_requests": 1.5}, {**good, "reserved_usd": "0.1"}, {**good, "pricing_checked": "soon"},
+                 {"available": False, "kind": "local_allowance", "limit_usd": 25, "message": "private-canary"},
+                 {"available": False, "kind": "other", "message": "private-canary"}]
+        script = ("const api=require(process.argv[1]);let s='';process.stdin.on('data',d=>s+=d).on('end',()=>"
+                  "process.stdout.write(JSON.stringify(JSON.parse(s).map(api.readBudget))));")
+        result = self.run_node(script, cases)
+        self.assertEqual(result[8], {"available": False})
+        self.assertIsNone(result[9])
+        self.assertEqual(result[0], {"available": True, "month": "2026-10", "limit": 25, "reserved": 0.12, "remaining": 24.88, "paidRequests": 12, "perRequest": 0.01,
+                                     "providerLimitRequired": True, "pricingChecked": "2026-10-28", "validUntil": "2026-11-27"})
+        self.assertEqual(result[1:7], [None] * 6)
+        self.assertEqual(result[7]["pricingChecked"], "")
+
     def test_link_state_and_launch_guards(self):
         script = ("const api=require(process.argv[1]);let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const {catalog}=JSON.parse(s);"
                   "const q=t=>{try{return api.choicesFromQuery(t,catalog)}catch(e){return e.message}};"
@@ -211,7 +248,7 @@ class JavaScriptParityTests(unittest.TestCase):
         self.assertEqual(result["launch"], [True, False, False, False, False, False, False])
         self.assertEqual(result["loop"], [True, False, False, False])
         self.assertIsNone(result["state"][0])
-        self.assertEqual(result["state"][1], {"local": True, "choices": None, "credentials": {"nvidia": False, "openai": True, "anthropic": False}, "install": "idle"})
+        self.assertEqual(result["state"][1], {"local": True, "choices": None, "credentials": {"nvidia": False, "openai": True, "anthropic": False}, "install": "idle", "budget": None})
         self.assertEqual(result["state"][2]["choices"], {"role": "office", "budget": 10, "existing": "none"})
         self.assertEqual(result["state"][2]["install"], "ready")
 

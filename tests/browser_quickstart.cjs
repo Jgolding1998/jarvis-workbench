@@ -152,6 +152,11 @@ async function select(id, value) {
 async function click(selector) {
   await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 }
+async function key(name) {
+  const codes = {ArrowRight: 39, ArrowLeft: 37, Home: 36, End: 35};
+  for (const type of ["keyDown", "keyUp"]) await send("Input.dispatchKeyEvent", {type, key: name, code: name, windowsVirtualKeyCode: codes[name]});
+  await sleep(30);
+}
 async function noOverflow(label) {
   const result = await evaluate("[document.documentElement.scrollWidth, window.innerWidth]");
   check(result[0] <= result[1], label + " has no horizontal overflow (" + result.join(" > ") + ")");
@@ -201,11 +206,23 @@ async function hostedDesktop() {
   equal(await evaluate("[...document.querySelectorAll('.agent-guide')].map(a => a.href)"), [catalog.release.agent_guide, catalog.release.agent_guide], "agent guide links");
   equal(await evaluate("document.getElementById('feedback').href"), catalog.release.feedback, "feedback link");
   equal(await evaluate("document.querySelectorAll('input[type=password], #key-input').length"), 0, "hosted page has no key field");
-  equal(await evaluate("document.querySelectorAll('select').length"), 3, "exactly three dropdowns");
+  equal(await evaluate("document.querySelectorAll('select').length"), 2, "exactly two dropdowns");
+  equal(await evaluate("(() => { const b = document.getElementById('budget'); return [b.type, b.min, b.max, b.step, b.value]; })()"), ["range", "0", "100", "1", "0"], "budget is a 0 to 100 whole-dollar slider");
+  equal(await evaluate("[document.getElementById('budget-value').textContent, document.getElementById('budget').getAttribute('aria-valuetext')]"), ["$0", "$0, no paid AI"], "slider shows its value");
+  check(await evaluate("document.querySelector('label[for=budget]') !== null && document.getElementById('budget-value').tagName === 'OUTPUT'"), "slider has a label and a visible output");
+  check(!(await visible("budget-meter")), "hosted page has no allowance meter");
   check(await evaluate("document.querySelector('[data-action=\"import-choices\"]').offsetParent === null"), "hosted page has no load-choices button");
-  equal(await evaluate("document.querySelectorAll('input[type=range], select[multiple]').length"), 0, "no sliders or multiselects");
+  equal(await evaluate("[document.querySelectorAll('input[type=range]').length, document.querySelectorAll('select[multiple], input[type=checkbox]:not(#consent)').length]"), [1, 0], "one slider and no multiselects");
   await shot("hosted-desktop");
-  for (const choices of [{role: "developer", budget: 50, existing: "openai"}, {role: "study", budget: 0, existing: "ollama"}, {role: "creator", budget: 10, existing: "anthropic"}]) {
+  await evaluate("document.getElementById('budget').focus()");
+  for (let i = 0; i < 3; i++) await key("ArrowRight");
+  equal(await evaluate("[budget.value, document.getElementById('budget-value').textContent, document.getElementById('budget').getAttribute('aria-valuetext')]"), ["3", "$3", "$3 a month"], "arrow keys move the slider by one dollar");
+  equal(await text("plan-title"), plan({role: "office", budget: 3, existing: "none"}).title, "keyboard budget updates the plan");
+  await key("End");
+  equal(await evaluate("budget.value"), "100", "End key reaches the maximum");
+  await key("Home");
+  equal(await evaluate("budget.value"), "0", "Home key reaches $0");
+  for (const choices of [{role: "developer", budget: 37, existing: "openai"}, {role: "office", budget: 1, existing: "anthropic"}, {role: "developer", budget: 50, existing: "openai"}, {role: "study", budget: 0, existing: "ollama"}, {role: "creator", budget: 10, existing: "anthropic"}]) {
     await select("role", choices.role);
     await select("budget", choices.budget);
     await select("existing", choices.existing);
@@ -214,6 +231,8 @@ async function hostedDesktop() {
     equal(await evaluate("[...document.querySelectorAll('#plan-steps li span:first-child')].map(n => n.textContent)"), expected.steps, "steps parity " + JSON.stringify(choices));
     equal(await evaluate("[...document.querySelectorAll('#plan-tradeoffs li')].map(n => n.textContent)"), expected.tradeoffs, "tradeoffs parity " + JSON.stringify(choices));
     equal(await evaluate("document.getElementById('provider-link').href"), expected.setup_url, "provider link " + JSON.stringify(choices));
+    const limit = catalog.providers[expected.provider].limit_url || null;
+    equal(await evaluate("document.getElementById('limit-help').hidden ? null : document.getElementById('limit-link').href"), limit, "hard limit link " + JSON.stringify(choices));
   }
   await noOverflow("hosted desktop");
   await open("/hosted/setup.html?role=study&budget=25&existing=ollama");
@@ -451,6 +470,7 @@ async function localRegressions() {
   equal(await text("plan-title"), lib.recommend(mock.state.choices, catalog).title, "plan matches the service choices");
   for (const [id, value] of [["budget", "10"], ["existing", "anthropic"], ["role", "creator"]]) {
     await select(id, value);
+    if (id === "budget") await sleep(650);
     await waitIdle("sequential save " + id);
   }
   equal(mock.state.choices, {role: "creator", budget: 10, existing: "anthropic"}, "sequential changes all reach the service in order");
@@ -516,6 +536,139 @@ async function localRegressions() {
   await waitIdle("valid import");
   equal(mock.requests.filter((r) => r.method === "POST").map((r) => [r.path, r.body]), [["/api/quickstart/save", {choices: valid.choices}]], "valid file saved through the service only");
   equal(await evaluate("[role.value, budget.value, existing.value]"), ["study", "25", "nvidia"], "valid file restores the dropdowns");
+  mock.routes = {};
+}
+
+const BUDGET = {month: "2026-10", limit_usd: 25, reserved_usd: 0.12, remaining_usd: 24.88, paid_requests: 12, reserve_per_request_usd: 0.01,
+  kind: "local_allowance", provider_limit_required: true, pricing_checked: "2026-10-28", valid_until: "2026-11-27"};
+
+/* Slider saves are debounced and serialized, the allowance meter only shows service data, and AI calls refresh it. */
+async function localBudget() {
+  await viewport(1280, 900, false);
+  mock.routes = {};
+  mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, budget: Object.assign({}, BUDGET)});
+  mock.requests = [];
+  await open("/setup");
+  await waitFor("document.getElementById('mode-badge').textContent === 'ON THIS COMPUTER'", "local badge budget");
+  check(await visible("budget-meter"), "allowance meter shown in local mode");
+  equal(await text("meter-text"), "$0.12 reserved of $25.00, $24.88 left, 12 paid attempts", "meter shows service figures");
+  equal(await text("meter-month"), "2026-10", "meter shows the month");
+  equal(await evaluate("[document.getElementById('meter-bar').max, document.getElementById('meter-bar').value]"), [25, 0.12], "meter bar follows the service");
+  equal(await text("meter-note"), MESSAGES.meterNote + " Pricing assumptions checked 2026-10-28, due for review 2026-11-27; update Jarvis after that date.", "meter explains the local allowance and its review date");
+  equal(await evaluate("document.getElementById('limit-link').href"), catalog.providers.openai.limit_url, "OpenAI hard limit link");
+  await shot("local-budget");
+
+  // Several slider movements produce one save with the final value.
+  mock.requests = [];
+  for (const value of [26, 28, 31, 40]) {
+    await evaluate(`(() => { const b = document.getElementById('budget'); b.value = '${value}'; b.dispatchEvent(new Event('input', {bubbles: true})); })()`);
+    await sleep(60);
+  }
+  equal(await text("budget-value"), "$40", "output follows the slider before saving");
+  await sleep(650);
+  await waitIdle("slider save");
+  equal(mock.requests.filter((r) => r.path === "/api/quickstart/save").map((r) => r.body.choices.budget), [40], "slider saves once with the final value");
+  equal(mock.state.choices.budget, 40, "service holds the slider value");
+
+  // Keyboard on the slider keeps focus across the save.
+  await evaluate("document.getElementById('budget').focus()");
+  await key("ArrowLeft");
+  await sleep(650);
+  await waitIdle("keyboard save");
+  equal(mock.state.choices.budget, 39, "keyboard change saved");
+  equal(await evaluate("document.activeElement && document.activeElement.id"), "budget", "slider keeps focus after its save");
+
+  // Failed slider save rolls back.
+  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
+  await select("budget", "5");
+  await sleep(650);
+  await waitIdle("slider failure");
+  equal(await text("status"), MESSAGES.save, "slider save failure message");
+  equal(await evaluate("[budget.value, document.getElementById('budget-value').textContent]"), ["39", "$39"], "slider rolls back to the saved value");
+  delete mock.routes["POST /api/quickstart/save"];
+
+  // Test and chat refresh the allowance even when they fail.
+  await evaluate("document.getElementById('ai-box').hidden = false; document.getElementById('ai-box').open = true");
+  mock.state.credentials.openai = true;
+  await click("#consent");
+  route("POST /api/quickstart/test", (req, res) => { mock.state.budget.reserved_usd = 0.13; mock.state.budget.remaining_usd = 24.87; mock.state.budget.paid_requests = 13; json(res, 502, {error: LEAK}); });
+  const gets = mock.requests.filter((r) => r.method === "GET" && r.path === "/api/quickstart").length;
+  await click('[data-action="test"]');
+  await waitFor(`document.getElementById('meter-text').textContent.startsWith('$0.13')`, "meter refresh after failed test");
+  check(mock.requests.filter((r) => r.method === "GET" && r.path === "/api/quickstart").length > gets, "state re-read after a failed test");
+  equal(await text("status"), MESSAGES.test, "failed test keeps its fixed message");
+  await evaluate("document.getElementById('prompt').value = 'Hi'");
+  route("POST /api/quickstart/chat", (req, res) => { mock.state.budget.reserved_usd = 0.14; mock.state.budget.remaining_usd = 24.86; mock.state.budget.paid_requests = 14; json(res, 200, {reply: "ok"}); });
+  await click('[data-action="chat"]');
+  await waitFor(`document.getElementById('meter-text').textContent.startsWith('$0.14')`, "meter refresh after chat");
+
+  // Slider is locked during install.
+  mock.installOutcome = "running";
+  await click('[data-action="install"]');
+  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installRunning)}`, "install running budget");
+  check(await evaluate("document.getElementById('budget').disabled"), "slider locked during install");
+  const saves = mock.requests.filter((r) => r.path === "/api/quickstart/save").length;
+  await select("budget", "70");
+  await sleep(650);
+  equal(mock.requests.filter((r) => r.path === "/api/quickstart/save").length, saves, "no slider save during install");
+  mock.state.install = {state: "ready", message: LEAK};
+  mock.installOutcome = "ready";
+  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "install ready budget");
+
+  // Free providers and $0 explain what the allowance does not cover; malformed budget data hides the meter.
+  mock.routes = {};
+  mock.state = freshState({choices: {role: "office", budget: 0, existing: "ollama"}, budget: Object.assign({}, BUDGET, {limit_usd: 0, remaining_usd: 0, reserved_usd: 0, paid_requests: 0})});
+  await open("/setup");
+  equal(await text("meter-note"), MESSAGES.meterNote + " " + MESSAGES.meterFree + " Pricing assumptions checked 2026-10-28, due for review 2026-11-27; update Jarvis after that date.", "Ollama does not use the allowance");
+  check(!(await visible("limit-help")), "no hard limit link for Ollama");
+  mock.state = freshState({choices: {role: "office", budget: 0, existing: "openai"}, budget: Object.assign({}, BUDGET, {limit_usd: 0, remaining_usd: 0, reserved_usd: 0, paid_requests: 0})});
+  await open("/setup");
+  equal(await text("plan-title"), plan({role: "office", budget: 0, existing: "openai"}).title, "$0 with OpenAI recommends trial access");
+
+  // Unavailable allowance data: fixed paused text, no figures, no service message.
+  const CANARY = "PRIVATE-LEDGER-" + "c:\\Users\\someone\\budget.json";
+  mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, credentials: {nvidia: false, openai: true, anthropic: false},
+    budget: {available: false, kind: "local_allowance", limit_usd: 25, message: CANARY}});
+  await open("/setup");
+  check(await visible("budget-meter"), "unavailable allowance still shows the meter box");
+  equal(await text("meter-text"), MESSAGES.budgetUnavailable, "unavailable allowance shows the fixed paused text");
+  equal(await text("meter-note"), MESSAGES.budgetUnavailableNote, "unavailable allowance explains what still works");
+  check(!(await visible("meter-bar")) && !(await visible("meter-month")), "unavailable allowance hides the bar and month");
+  check(!(await evaluate("document.body.innerHTML.includes('PRIVATE-LEDGER')")), "service budget message never displayed");
+  check(await visible("ai-box") && !(await evaluate("document.getElementById('consent').disabled")), "chat stays available while paid AI is paused");
+  await shot("local-budget-paused");
+
+  // Known budget error code: fixed paused message. Other codes and statuses keep the usual fixed text.
+  await evaluate("document.getElementById('ai-box').open = true");
+  await click("#consent");
+  await evaluate("document.getElementById('prompt').value = 'Hi'");
+  const cases = [
+    ["test", 400, {code: "budget_unavailable", error: CANARY}, MESSAGES.budgetPaused],
+    ["chat", 400, {code: "budget_unavailable", error: CANARY}, MESSAGES.budgetPaused],
+    ["test", 400, {code: "other", error: CANARY}, MESSAGES.test],
+    ["chat", 500, {code: "budget_unavailable", error: CANARY}, MESSAGES.chat],
+    ["test", 400, ["budget_unavailable"], MESSAGES.test],
+  ];
+  for (const [action, statusCode, body, expected] of cases) {
+    route("POST /api/quickstart/" + action, (req, res) => json(res, statusCode, body));
+    await evaluate("document.getElementById('status').textContent = ''");
+    await click('[data-action="' + action + '"]');
+    await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(expected)}`, action + " " + statusCode + " " + JSON.stringify(body).slice(0, 30));
+    await waitIdle(action + " settled");
+    check(!(await evaluate("document.body.innerHTML.includes('PRIVATE-LEDGER')")), "error body never displayed for " + action + " " + statusCode);
+  }
+  mock.routes = {};
+  for (const broken of [{kind: "invoice"}, Object.assign({}, BUDGET, {reserved_usd: -1}), Object.assign({}, BUDGET, {month: "2026-13"}), Object.assign({}, BUDGET, {paid_requests: 1.5}), "25"]) {
+    mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, budget: broken});
+    await open("/setup");
+    check(!(await visible("budget-meter")), "malformed allowance hidden " + JSON.stringify(broken).slice(0, 40));
+  }
+  await viewport(390, 844, true);
+  mock.state = freshState({choices: {role: "office", budget: 25, existing: "openai"}, budget: Object.assign({}, BUDGET)});
+  await open("/setup");
+  await noOverflow("local budget mobile");
+  await shot("local-budget-mobile");
+  await viewport(1280, 900, false);
   mock.routes = {};
 }
 
@@ -631,6 +784,7 @@ async function main() {
     await hostedPhone();
     await localFlow();
     await localRegressions();
+    await localBudget();
     await localVariants();
     await websitePages();
     equal(external, [], "no requests left the local fixture server");

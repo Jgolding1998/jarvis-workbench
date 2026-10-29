@@ -19,6 +19,7 @@ from .presence import Presence
 from .onboarding import Onboarding, OnboardingError
 from .credential_store import CredentialError
 from .provider_client import ProviderError
+from .budget import BudgetError
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -402,6 +403,9 @@ def make_handler(service, token, setup=None):
                 else:
                     self._send(404, {"error": "Not found"})
                     return
+            except BudgetError:
+                self._send(400, {"error": "Paid AI is paused. Review the local allowance and pricing check.", "code": "budget_unavailable"})
+                return
             except (UserError, OnboardingError, CredentialError, ProviderError) as error:
                 self._send(400, {"error": str(error)})
                 return

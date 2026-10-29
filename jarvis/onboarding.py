@@ -13,6 +13,7 @@ from pathlib import Path
 from queue import Empty, Queue
 
 from . import install_tools, planner
+from .budget import BudgetLedger, BudgetError
 
 CLOUD = frozenset({"nvidia", "openai", "anthropic"})
 PROVIDERS = CLOUD | {"none", "ollama"}
@@ -23,12 +24,13 @@ class OnboardingError(ValueError):
 
 
 class Onboarding:
-    def __init__(self, root, *, vault=None, responder=None, installer=None, launch=None):
+    def __init__(self, root, *, vault=None, responder=None, installer=None, launch=None, budget=None):
         self.root = Path(root)
         self._vault = vault
         self._responder = responder
         self._installer = installer or self._install
         self._launch = launch or self._launch_desktop
+        self._budget = budget or BudgetLedger(self.root)
         self._lock = threading.RLock()
         self._request_lock = threading.Lock()
         self._choices = None
@@ -53,6 +55,22 @@ class Onboarding:
             self._vault = WindowsCredentialStore()
         return self._vault
 
+    def _current_limit(self):
+        try:
+            path = install_tools.local_path(self.root, "runtime", "quickstart.json")
+            if not path.exists():
+                return 0
+            if not path.is_file() or path.stat().st_nlink != 1:
+                raise ValueError()
+            with path.open("rb") as handle:
+                data = handle.read(1025)
+            if len(data) > 1024:
+                raise ValueError()
+            from .quickstart import validate_choices
+            return validate_choices(planner.parse_json(data))["budget"]
+        except (ValueError, OSError, TypeError):
+            raise OnboardingError("The saved allowance is unavailable. Paid AI is paused until you save valid setup choices.") from None
+
     def snapshot(self):
         from .quickstart import recommend
         from .provider_client import catalog
@@ -63,11 +81,19 @@ class Onboarding:
             except (ValueError, OSError):
                 credentials[provider] = False
         with self._lock:
-            return {"local": True, "choices": self._choices.copy() if self._choices else None,
-                    "plan": recommend(self._choices) if self._choices else None,
+            limit = self._choices["budget"] if self._choices else 0
+            try:
+                limit = self._current_limit()
+                allowance = self._budget.snapshot(limit)
+            except (BudgetError, OnboardingError):
+                allowance = {"available": False, "kind": "local_allowance", "limit_usd": limit,
+                             "message": "Paid AI is paused because local spending information is unavailable."}
+            choices = {**self._choices, "budget": limit} if self._choices else None
+            return {"local": True, "choices": choices,
+                    "plan": recommend(choices) if choices else None,
                     "credentials": credentials,
                     "install": {"state": self._install_state, "message": self._install_message},
-                    "providers": catalog()}
+                    "providers": catalog(), "budget": allowance}
 
     def save(self, choices):
         from .quickstart import validate_choices, recommend
@@ -137,10 +163,15 @@ class Onboarding:
             if time.monotonic() - self._last_call < 2:
                 raise OnboardingError("Wait a moment before sending another request.")
             self._last_call = time.monotonic()
+            limit = self._current_limit() if provider in {"openai", "anthropic"} else 0
+            if provider in {"openai", "anthropic"} and limit == 0:
+                raise OnboardingError("Paid AI is paused at a $0 allowance. Choose a free option or raise your monthly allowance.")
             if provider in CLOUD:
                 key = self._credentials().read(provider)
                 if not key:
                     raise OnboardingError("Save your own API key for this provider first.")
+            if provider in {"openai", "anthropic"}:
+                self._budget.reserve(provider, limit)
             from .provider_client import respond
             reply = (self._responder or respond)(provider, prompt, key=key)
             return {"reply": reply}

@@ -277,7 +277,7 @@ class WheelInstallTests(unittest.TestCase):
             source = Path(directory) / "source.tar.gz"
             payload = {"srt.py": b"VALUE = 1\n", "srt_tools/__init__.py": b""}
             with tarfile.open(source, "w:gz") as archive:
-                for name, content in payload.items():
+                for name, content in {**payload, "srt_tools/tests/test_source_only.py": b"source tests are not runtime modules\n"}.items():
                     member = tarfile.TarInfo("srt-3.5.3/" + name)
                     member.size = len(content)
                     archive.addfile(member, io.BytesIO(content))

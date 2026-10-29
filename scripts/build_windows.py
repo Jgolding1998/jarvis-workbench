@@ -563,7 +563,7 @@ def verify_srt_payload(source, wheel):
     with tarfile.open(source, "r:gz") as archive:
         for member in archive.getmembers():
             name = member.name.removeprefix(prefix)
-            if member.name.startswith(prefix) and (name == "srt.py" or name.startswith("srt_tools/") and name.endswith(".py")):
+            if member.name.startswith(prefix) and (name == "srt.py" or name.startswith("srt_tools/") and name.endswith(".py") and not name.startswith("srt_tools/tests/")):
                 if not member.isfile() or member.size > 1024 * 1024 or name in expected:
                     raise BuildError("The srt source has an unsupported Python member")
                 expected[name] = archive.extractfile(member).read()
