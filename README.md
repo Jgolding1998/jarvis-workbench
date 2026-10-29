@@ -20,7 +20,7 @@ python3 -m jarvis.launcher
 
 The launcher starts Jarvis in safe demo mode and opens the setup wizard in your browser. The wizard asks:
 
-1. Whether you want to set up Jarvis at all. **No thanks** stops Jarvis and changes nothing.
+1. Whether you want to set up Jarvis at all. **No thanks** opens a screen where you can close the page or choose **Stop Jarvis** to end the local session.
 2. What you will use it for: Developer, Office work, Study, Creator, Desk privacy, or Custom.
 3. The most you would spend each month, from $0 to $500. This is a ceiling, not a target.
 4. Which AI tool you already use, if any.
@@ -30,6 +30,8 @@ The launcher starts Jarvis in safe demo mode and opens the setup wizard in your 
 You then get a plan: which features will work on your computer and why others will not, the exact tasks left, which ones you do and which one Jarvis does, the launch command, and cost guidance. Choose **Apply and save preferences** to write `runtime/setup-config.json`. Saving or importing a plan never turns on the camera, microphone, mouse, or Windows actions.
 
 You can also download the plan as JSON and import it later. The same wizard works as a static web page with no local server; in that mode it only builds and downloads plans.
+
+On a phone, use the guide and practice area, then save the plan JSON. Open the computer setup link on your computer to download Jarvis, and import your plan in its local wizard. The ZIP contains Python desktop software; it does not install an iPhone or Android app.
 
 ## Add optional tools on Windows
 

@@ -252,8 +252,21 @@ def make_handler(service, token, setup=None):
     setup = setup or SetupContext()
 
     class Handler(BaseHTTPRequestHandler):
+        def version_string(self):
+            return "Jarvis"
+
         def log_message(self, *args):
             pass
+
+        def send_error(self, code, message=None, explain=None):
+            status = 405 if code == 501 else code
+            public = {400: "Invalid request", 403: "Request rejected", 404: "Not found",
+                      405: "Method not allowed", 408: "Request timed out", 414: "Request too large",
+                      431: "Request headers too large"}.get(status, "Request failed")
+            self.close_connection = True
+            if getattr(self, "request_version", "HTTP/0.9") == "HTTP/0.9":
+                self.request_version = "HTTP/1.0"
+            self._send(status, {"error": public})
 
         def _trusted(self):
             if len(self.headers.get_all("Host", [])) != 1 or len(self.headers.get_all("Origin", [])) > 1:
@@ -273,7 +286,8 @@ def make_handler(service, token, setup=None):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
 
         def do_GET(self):
             if not self._trusted():
@@ -298,7 +312,7 @@ def make_handler(service, token, setup=None):
 
         def do_POST(self):
             supplied = self.headers.get("X-Jarvis-Token", "")
-            if not self._trusted() or len(self.headers.get_all("X-Jarvis-Token", [])) != 1 or not hmac.compare_digest(supplied, token):
+            if not self._trusted() or len(self.headers.get_all("X-Jarvis-Token", [])) != 1 or not supplied.isascii() or not hmac.compare_digest(supplied, token):
                 self._send(403, {"error": "Local session authorization required"})
                 return
             try:

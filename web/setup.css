@@ -113,6 +113,8 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .task code, .command code { display:block; background:#071014; border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-family:Consolas,"Cascadia Mono",monospace; font-size:13px; color:#cfe9de; overflow-x:auto; white-space:pre; margin:6px 0; }
 .command { display:flex; gap:10px; align-items:center; }
 .command code { flex:1; margin:0; }
+.handoff p, .handoff li { color:#b8cbd2; font-size:14px; line-height:1.6; }
+.handoff code { white-space:normal; overflow-wrap:anywhere; }
 .pill { font-size:10px; letter-spacing:1px; font-weight:700; padding:3px 8px; border-radius:999px; border:1px solid var(--line-2); max-width:100%; white-space:normal; overflow-wrap:anywhere; text-transform:uppercase; }
 .pill.manual { color:#cbd8f5; border-color:#3b4a66; }
 .pill.automatic { color:var(--good); border-color:#355347; }

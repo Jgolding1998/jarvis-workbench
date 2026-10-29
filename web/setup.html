@@ -24,7 +24,7 @@
     <section class="step" data-step="welcome" hidden>
       <p class="eyebrow">STEP 1</p>
       <h1>Set up your Jarvis?</h1>
-      <p class="lead">Choose a setup for your computer, even if you are planning on your phone. Start with a safe practice mode, then add the controls you want. This guide makes a plan and does not install anything by itself.</p>
+      <p class="lead">Jarvis runs on a computer. Your phone can use this guide and the practice area, but cannot install or run the desktop app. Make your plan here, then continue on your computer.</p>
       <ul class="facts">
         <li><b>$0 by default.</b> No account, subscription, or API key.</li>
         <li><b>Nothing turns on by itself.</b> Camera, microphone, mouse, and Windows actions each need your explicit choice.</li>
@@ -42,7 +42,7 @@
       <p class="lead">Nothing was installed or changed. You can close this page.</p>
       <p id="exit-note" class="note" role="status"></p>
       <div class="actions">
-        <button id="exit-local" class="primary" type="button" data-action="exit" hidden>Stop Jarvis and close</button>
+        <button id="exit-local" class="primary" type="button" data-action="exit" hidden>Stop Jarvis</button>
         <button class="ghost" type="button" data-action="restart">Start over</button>
       </div>
     </section>
@@ -109,6 +109,17 @@
       <p class="eyebrow">YOUR PLAN</p>
       <h1>Here is your setup plan.</h1>
       <p id="plan-summary" class="lead"></p>
+      <section id="desktop-handoff" class="card handoff" hidden>
+        <h2>Continue on your computer</h2>
+        <p>The Jarvis ZIP needs Python on a computer. It does not install an iPhone or Android app.</p>
+        <ol>
+          <li>Choose <b>Download plan (JSON)</b> to keep your choices.</li>
+          <li>Open this setup link on your computer, then download and unzip Jarvis there.</li>
+          <li>Open <b>Start-Jarvis.cmd</b> on Windows. Use <b>Import plan</b> in its setup wizard to restore your saved choices.</li>
+        </ol>
+        <div class="command"><code id="setup-address"></code><button class="ghost small" type="button" data-action="copy-setup">Copy computer setup link</button></div>
+        <p class="note">The link contains no answers. Transfer the plan file to your computer yourself if you want to keep them. Camera, microphone, mouse control and Windows locking run on the computer.</p>
+      </section>
       <div class="plan-grid">
         <section class="card">
           <h2>Features</h2>
@@ -117,7 +128,7 @@
           <div class="prefs">
             <label for="camera-index">Camera number <small>(0 is the usual webcam)</small></label>
             <input id="camera-index" type="number" min="0" max="9" step="1" value="0">
-            <label class="check"><input id="hand-cursor" type="checkbox"> Let hand control move the real cursor (Windows, off by default)</label>
+            <label id="cursor-reminder" class="check" hidden><input id="hand-cursor" type="checkbox"> Add a reminder to enable real cursor control after practice. This does not enable it.</label>
           </div>
         </section>
         <section class="card">
@@ -144,14 +155,14 @@
         <button class="ghost" type="button" data-action="back">Back</button>
         <button class="ghost" type="button" data-action="download">Download plan (JSON)</button>
         <label class="ghost button">Import plan<input id="import" type="file" accept="application/json,.json" hidden></label>
-        <a id="release-link" class="primary button" hidden>Download Jarvis</a>
+        <a id="release-link" class="primary button" hidden>Download for computer (ZIP)</a>
         <button id="apply" class="primary" type="button" data-action="apply" hidden>Apply and save preferences</button>
         <a id="dashboard-link" class="ghost button" href="/" hidden>Open dashboard</a>
         <button id="exit-plan" class="ghost" type="button" data-action="exit" hidden>Stop Jarvis</button>
       </div>
     </section>
   </main>
-  <footer class="foot">Runs on your computer. This page sends nothing anywhere and never asks for passwords or API keys.</footer>
+  <footer class="foot">No account or API key is required. Desktop controls run on your computer.</footer>
 </div>
 </body>
 </html>

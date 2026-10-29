@@ -29,6 +29,8 @@ class SiteBuildTests(unittest.TestCase):
             self.assertNotIn('name="jarvis-mode" content="auto"', content)
             self.assertFalse((output / "runtime").exists())
             self.assertFalse((output / "jarvis").exists())
+            for name in ("index.html", "setup.html", "privacy.html"):
+                self.assertIn('http-equiv="Content-Security-Policy"', (output / name).read_text(encoding="utf-8"))
 
     def test_source_directories_are_not_valid_output(self):
         for path in (ROOT, ROOT.parent, ROOT / "web", ROOT / "website"):

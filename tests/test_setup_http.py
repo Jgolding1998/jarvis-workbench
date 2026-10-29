@@ -97,6 +97,20 @@ class SetupHTTPTests(unittest.TestCase):
         self.assertEqual(self.request("/api/setup/apply", "POST", body, {"X-Jarvis-Token": TOKEN, "Origin": "https://attacker.example"})[0], 403)
         self.assertFalse((self.root / "runtime").exists())
 
+    def test_bad_token_and_unsupported_method_do_not_echo_plan_contents(self):
+        private = "SYNTHETIC_PRIVATE_PLAN"
+        body = {"answers": {**self.answers(), "private": private}}
+        status, headers, response = self.request("/api/setup/apply", "POST", body, {"X-Jarvis-Token": "\u00e9"})
+        self.assertEqual(status, 403)
+        self.assertNotIn(private.encode(), response)
+        self.assertFalse((self.root / "runtime").exists())
+        status, headers, response = self.request("/api/setup/apply?value=" + private, "OPTIONS")
+        self.assertEqual(status, 405)
+        self.assertEqual(json.loads(response), {"error": "Method not allowed"})
+        self.assertNotIn(private.encode(), response)
+        self.assertEqual(headers["Server"], "Jarvis")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+
     def test_apply_rejects_unsafe_payloads(self):
         good = self.answers()
         cases = [{"answers": {**good, "__proto__": {"x": 1}}}, {"answers": {**good, "api_key": "sk-test"}},

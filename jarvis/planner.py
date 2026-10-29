@@ -226,10 +226,14 @@ def build_plan(answers, catalog):
                       "url": catalog["release"]["download_url"] if task.get("url") == "release" else task.get("url"),
                       "command": launch if task.get("command") == "launch" else task.get("command"),
                       "check": list(task.get("check", []))})
+    if "hand_control" in included and answers["preferences"]["hand_move_cursor"]:
+        tasks.append({"id": "cursor_permission", "kind": "manual", "title": "Enable real cursor control after practice",
+                      "detail": "On your Windows computer, stop hand control, select Move the real cursor, apply hand settings, then start watch me again. Saving this plan never enables movement.",
+                      "url": None, "command": None, "check": []})
     budget = answers["budget_usd"]
     tool = next(item for item in catalog["ai_tools"] if item["id"] == answers["ai_tool"])
     voice = next(item for item in catalog["voice_options"] if item["id"] == answers["voice"])
-    cost = ["Jarvis costs $0 per month. Every implemented feature runs on this computer.",
+    cost = ["Jarvis costs $0 per month. Desktop features run on the computer where you install Jarvis.",
             "Your ceiling is " + _money(budget) + " per month. It is a limit for planning, not a target and not a price guarantee. No purchase is recommended."]
     if tool["kind"] == "api":
         cost.append("API usage is billed per use by the provider. With a $0 ceiling, leave it out; Jarvis does not need it." if budget == 0 else

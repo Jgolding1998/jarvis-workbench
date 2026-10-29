@@ -129,9 +129,11 @@
         check: (task.check || []).slice()});
     });
     const budget = answers.budget_usd;
+    if (included.has("hand_control") && answers.preferences.hand_move_cursor) tasks.push({id: "cursor_permission", kind: "manual", title: "Enable real cursor control after practice",
+      detail: "On your Windows computer, stop hand control, select Move the real cursor, apply hand settings, then start watch me again. Saving this plan never enables movement.", url: null, command: null, check: []});
     const tool = catalog.ai_tools.find((item) => item.id === answers.ai_tool);
     const voice = catalog.voice_options.find((item) => item.id === answers.voice);
-    const cost = ["Jarvis costs $0 per month. Every implemented feature runs on this computer.",
+    const cost = ["Jarvis costs $0 per month. Desktop features run on the computer where you install Jarvis.",
       "Your ceiling is " + money(budget) + " per month. It is a limit for planning, not a target and not a price guarantee. No purchase is recommended."];
     if (tool.kind === "api") {
       cost.push(budget === 0 ? "API usage is billed per use by the provider. With a $0 ceiling, leave it out; Jarvis does not need it."
@@ -180,7 +182,53 @@
     return {checked: text(data.checked_on), budgetNote: text(data.budget_note), entries};
   }
 
-  const api = {validateAnswers, buildPlan, defaultAnswers, readProviderCatalog, money};
+  function parseImportJson(text) {
+    const data = JSON.parse(text);
+    const stack = [];
+    for (let index = 0; index < text.length; index++) {
+      const character = text[index];
+      if (character === "{" || character === "[") {
+        stack.push(character === "{" ? new Set() : null);
+        if (stack.length > 32) throw new Error();
+      } else if (character === "}" || character === "]") stack.pop();
+      else if (character === '"') {
+        const start = index;
+        let escaped = false;
+        for (index++; index < text.length; index++) {
+          if (escaped) escaped = false;
+          else if (text[index] === "\\") escaped = true;
+          else if (text[index] === '"') break;
+        }
+        let next = index + 1;
+        while (next < text.length && /\s/.test(text[next])) next++;
+        if (text[next] === ":") {
+          const keys = stack[stack.length - 1];
+          const key = JSON.parse(text.slice(start, index + 1));
+          if (keys.has(key)) throw new Error();
+          keys.add(key);
+        }
+      }
+    }
+    return data;
+  }
+
+  function importedAnswers(text, catalog) {
+    try {
+      if (typeof text !== "string" || text.length > 16384) throw new Error();
+      const data = parseImportJson(text);
+      const wrapped = isPlainObject(data) && own(data, "schema") && data.schema === PLAN_SCHEMA;
+      return validateAnswers(wrapped ? data.answers : data, catalog);
+    } catch (error) {
+      throw new Error("Choose a valid Jarvis plan JSON file under 16 KB.");
+    }
+  }
+
+  function isMobilePlanner(info) {
+    return Boolean(info.userAgentData && info.userAgentData.mobile) || /Android|iPhone|iPad|iPod/i.test(info.userAgent || "") ||
+      (/MacIntel/i.test(info.platform || "") && Number(info.maxTouchPoints) > 1);
+  }
+
+  const api = {validateAnswers, buildPlan, defaultAnswers, readProviderCatalog, importedAnswers, isMobilePlanner, money};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => boot(api));
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -192,6 +240,7 @@ function boot(api) {
   const meta = document.querySelector('meta[name="jarvis-mode"]');
   const forced = meta ? meta.content : "auto";
   const local = forced !== "hosted" && location.protocol === "http:" && location.hostname === "127.0.0.1";
+  const phone = !local && api.isMobilePlanner(navigator);
   const state = {catalog: null, answers: null, step: "welcome", token: "", diagnostics: null, providers: null, saved: false};
 
   function el(tag, attributes, children) {
@@ -207,6 +256,13 @@ function boot(api) {
   function status(message, bad) {
     $("status").textContent = message;
     $("status").classList.toggle("bad", Boolean(bad));
+  }
+  function copyText(text, success, failure) {
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+      status(failure, true);
+      return;
+    }
+    navigator.clipboard.writeText(text).then(() => status(success), () => status(failure, true));
   }
   async function localJson(path, body) {
     const options = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json", "X-Jarvis-Token": state.token}, body: JSON.stringify(body)};
@@ -320,6 +376,7 @@ function boot(api) {
       return row;
     }));
     $("camera-index").value = String(state.answers.preferences.camera_index);
+    $("cursor-reminder").hidden = !included.some((feature) => feature.id === "hand_control");
     $("hand-cursor").checked = state.answers.preferences.hand_move_cursor;
     $("cost-notes").replaceChildren(...plan.cost.notes.map((note) => el("li", {text: note})));
     $("guidance").replaceChildren(...plan.guidance.map((item) => {
@@ -348,13 +405,14 @@ function boot(api) {
       const [kind, label] = taskState(task);
       const li = el("li", {className: "task " + kind}, [el("div", {className: "task-head"}, [el("b", {text: task.title}), el("span", {className: "pill " + kind, text: label})]), el("p", {text: task.detail})]);
       if (task.command) li.append(el("code", {text: task.command}));
-      if (task.url) li.append(el("a", {href: task.url, target: "_blank", rel: "noopener noreferrer", text: "Official download or page"}));
+      if (phone && ["download", "hand_model"].includes(task.id)) li.append(el("p", {className: "note", text: "Open the computer setup link above on your computer to complete this download."}));
+      else if (task.url) li.append(el("a", {href: task.url, target: "_blank", rel: "noopener noreferrer", text: "Official download or page"}));
       else if (task.id === "download" && !local) li.append(el("p", {className: "note", text: "The release download link will be added here."}));
       return li;
     }));
     $("launch-command").textContent = plan.launch_command;
     const release = state.catalog.release.download_url;
-    $("release-link").hidden = local || !release;
+    $("release-link").hidden = local || phone || !release;
     if (release) { $("release-link").href = release; $("release-link").rel = "noopener noreferrer"; }
     $("apply").hidden = !local;
     $("dashboard-link").hidden = !local || !state.saved;
@@ -376,20 +434,15 @@ function boot(api) {
   async function importPlan(file) {
     try {
       if (file.size > 16384) throw new Error("That file is too large to be a Jarvis plan");
-      const data = JSON.parse(await file.text());
-      const answers = isPlan(data) ? data.answers : data;
-      state.answers = api.validateAnswers(answers, state.catalog);
+      state.answers = api.importedAnswers(await file.text(), state.catalog);
       state.saved = false;
       renderPurpose();
       renderChoices();
       show(state.answers.install ? "plan" : "declined");
       status("Plan imported. Nothing was armed or turned on.");
     } catch (error) {
-      status("Could not import: " + error.message, true);
+      status("Could not import that plan. Choose a valid Jarvis plan JSON file under 16 KB.", true);
     }
-  }
-  function isPlan(data) {
-    return data !== null && typeof data === "object" && !Array.isArray(data) && Object.prototype.hasOwnProperty.call(data, "schema") && data.schema === "jarvis-setup-plan/1";
   }
 
   async function apply() {
@@ -455,7 +508,8 @@ function boot(api) {
     else if (action === "apply") apply();
     else if (action === "exit") exit();
     else if (action === "speak") speak();
-    else if (action === "copy") navigator.clipboard.writeText($("launch-command").textContent).then(() => status("Command copied."), () => status("Copy failed. Select the command and copy it yourself.", true));
+    else if (action === "copy-setup") copyText($("setup-address").textContent, "Computer setup link copied. Save the plan separately to keep your choices.", "Select the computer setup address above and copy it.");
+    else if (action === "copy") copyText($("launch-command").textContent, "Command copied.", "Select the command and copy it yourself.");
   });
   document.addEventListener("change", (event) => {
     const target = event.target;
@@ -500,6 +554,8 @@ function boot(api) {
 
   async function start() {
     $("mode-badge").textContent = local ? "ON THIS COMPUTER" : "PLANNER ONLY";
+    $("desktop-handoff").hidden = local;
+    $("setup-address").textContent = new URL("setup.html", location.href).href;
     $("speak").hidden = !("speechSynthesis" in window && "SpeechSynthesisUtterance" in window);
     try {
       const response = await fetch("setup-catalog.json", {cache: "no-store"});
@@ -512,7 +568,7 @@ function boot(api) {
     }
     state.answers = api.defaultAnswers(state.catalog);
     const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
-    const mobilePlanner = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const mobilePlanner = api.isMobilePlanner(navigator);
     if (!mobilePlanner && /mac/i.test(platform)) state.answers.device.os = "macos";
     else if (!mobilePlanner && /linux|x11/i.test(platform)) state.answers.device.os = "linux";
     try {

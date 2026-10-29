@@ -174,6 +174,14 @@ class PlanTests(unittest.TestCase):
         self.assertIn("Needs Windows", status(plan, "offline_voice")["reasons"])
         self.assertNotIn("--voice-model", plan["launch_command"])
 
+    def test_cursor_preference_adds_a_reminder_only_for_available_hand_control(self):
+        wanted = plan_for(preset="creator", features=["hand_control"], hand_move_cursor=True)
+        reminder = next(task for task in wanted["tasks"] if task["id"] == "cursor_permission")
+        self.assertIsNone(reminder["command"])
+        self.assertIn("never enables movement", reminder["detail"])
+        unavailable = plan_for(os="macos", features=["hand_control"], hand_move_cursor=True)
+        self.assertNotIn("cursor_permission", [task["id"] for task in unavailable["tasks"]])
+
     def test_budget_is_a_ceiling_not_an_upsell(self):
         for preset in [p["id"] for p in CATALOG["presets"]]:
             features = next(p for p in CATALOG["presets"] if p["id"] == preset)["features"]
@@ -341,6 +349,41 @@ class ConfigTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "Node.js not installed; JavaScript parity check skipped")
 class JavaScriptParityTests(unittest.TestCase):
+    def test_import_rejects_duplicate_and_escaped_duplicate_keys(self):
+        good = json.dumps(answers())
+        variants = [good.replace('"install": true', '"install": false, "install": true'),
+                    good.replace('"install": true', '"install": true, "\\u0069nstall": true'),
+                    good.replace('"camera": true', '"camera": false, "camera": true'), "[" * 33 + "0" + "]" * 33]
+        script = ("const api=require(process.argv[1]);let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{"
+                  "const p=JSON.parse(s);process.stdout.write(JSON.stringify(p.texts.map(t=>{try{api.importedAnswers(t,p.catalog);return false}catch(e){return true}})));});")
+        self.assertEqual(self.run_node(script, {"catalog": CATALOG, "texts": variants}), [True] * len(variants))
+    def test_import_errors_do_not_echo_file_contents(self):
+        private_value = "-".join(("private", "fixture", "only"))
+        invalid = '{"budget_usd":' + private_value + '}'
+        untrusted = answers(ai_tool=private_value)
+        script = ("const api=require(process.argv[1]);let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{"
+                  "const p=JSON.parse(s);process.stdout.write(JSON.stringify(p.texts.map(t=>{try{return {answers:api.importedAnswers(t,p.catalog)}}"
+                  "catch(e){return {error:e.message}}})));});")
+        good = answers()
+        result = self.run_node(script, {"catalog": CATALOG, "texts": [invalid, json.dumps(untrusted), '{"__proto__":{}}', json.dumps(good),
+                                                                    json.dumps({"schema": planner.PLAN_SCHEMA, "answers": good, "extra": private_value})]})
+        for item in result[:3]:
+            self.assertEqual(item, {"error": "Choose a valid Jarvis plan JSON file under 16 KB."})
+            self.assertNotIn(private_value, json.dumps(item))
+        self.assertEqual(result[3]["answers"], good)
+        self.assertEqual(result[4]["answers"], good)
+
+    def test_phone_detection_includes_ipad_desktop_user_agent(self):
+        script = ("const api=require(process.argv[1]);let s='';process.stdin.on('data',d=>s+=d).on('end',()=>"
+                  "process.stdout.write(JSON.stringify(JSON.parse(s).map(api.isMobilePlanner))));")
+        result = self.run_node(script, [
+            {"userAgent": "iPhone", "platform": "iPhone"}, {"userAgent": "Android", "platform": "Linux"},
+            {"userAgent": "Macintosh", "platform": "MacIntel", "maxTouchPoints": 5},
+            {"userAgent": "desktop", "userAgentData": {"mobile": True}},
+            {"userAgent": "Windows", "platform": "Win32", "maxTouchPoints": 0},
+            {"userAgent": "Macintosh", "platform": "MacIntel", "maxTouchPoints": 0}])
+        self.assertEqual(result, [True, True, True, True, False, False])
+
     def run_node(self, script, payload):
         result = subprocess.run(["node", "-e", script, str(SETUP_JS)], input=json.dumps(payload), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)

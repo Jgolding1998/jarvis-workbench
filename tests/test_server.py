@@ -53,6 +53,43 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("/api/command", "POST", {"command":"active"})[0], 403)
         self.assertEqual(self.request("/api/command", "POST", {"command":"active"}, {"X-Jarvis-Token":"wrong"})[0], 403)
 
+    def test_non_ascii_session_token_returns_403_without_mutation(self):
+        before = self.service.presence.active
+        command = "stop" if before else "active"
+        status, headers, body = self.request("/api/command", "POST", {"command": command}, {"X-Jarvis-Token": "\u00e9"})
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body), {"error": "Local session authorization required"})
+        self.assertEqual(self.service.presence.active, before)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(self.request("/api/status")[0], 200)
+
+    def test_unsupported_methods_have_fixed_json_headers_and_no_reflection(self):
+        private = "SYNTHETIC_PRIVATE_MARKER"
+        for method in ("OPTIONS", "TRACE", private):
+            with self.subTest(method=method):
+                status, headers, body = self.request("/?api_key=" + private, method=method)
+                self.assertEqual(status, 405)
+                self.assertEqual(json.loads(body), {"error": "Method not allowed"})
+                self.assertEqual(headers["Content-Type"], "application/json")
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
+                self.assertEqual(headers["Server"], "Jarvis")
+                self.assertNotIn(private.encode(), body)
+                self.assertNotIn(method.encode(), body)
+
+    def test_regular_response_does_not_disclose_python_banner(self):
+        for path in ("/", "/api/status", "/does-not-exist"):
+            status, headers, body = self.request(path)
+            self.assertEqual(headers["Server"], "Jarvis")
+            self.assertNotIn("Python", headers["Server"])
+
+    def test_head_error_has_headers_without_body(self):
+        status, headers, body = self.request("/", method="HEAD")
+        self.assertEqual(status, 405)
+        self.assertEqual(body, b"")
+        self.assertEqual(headers["Server"], "Jarvis")
+        self.assertIn("Content-Security-Policy", headers)
+
     def test_same_origin_activation_works(self):
         status, _, body = self.request("/api/command", "POST", {"command":"active"}, {"Origin":"http://"+self.host,"X-Jarvis-Token":"test-session-only"})
         self.assertEqual(status, 200)
