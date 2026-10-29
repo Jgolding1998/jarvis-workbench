@@ -87,6 +87,12 @@ class CatalogTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_nesting_limit_ignores_brackets_and_escaped_quotes_in_strings(self):
+        data = {"text": "[" * 100 + '\\"' + "]" * 100}
+        self.assertEqual(planner.parse_json(json.dumps(data).encode("utf-8")), data)
+        with self.assertRaisesRegex(ValueError, "nested"):
+            planner.parse_json("[" * 33 + "0" + "]" * 33)
+
     def reject(self, data):
         with self.assertRaises((ValueError, TypeError)):
             planner.validate_answers(data, CATALOG)

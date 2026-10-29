@@ -41,6 +41,25 @@ def _no_duplicates(pairs):
 
 def parse_json(text):
     """Parse untrusted JSON, rejecting duplicate keys and non-finite numbers."""
+    if isinstance(text, (bytes, bytearray)):
+        text = text.decode("utf-8-sig")
+    depth, quoted, escaped = 0, False, False
+    for character in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+        elif character == '"':
+            quoted = True
+        elif character in "[{":
+            depth += 1
+            if depth > 32:
+                raise ValueError("JSON is too deeply nested")
+        elif character in "]}":
+            depth -= 1
     def constant(name):
         raise ValueError("Non-finite number")
     try:
