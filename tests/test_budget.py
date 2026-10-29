@@ -33,13 +33,20 @@ def first_process_reservations(root, barrier, queue):
     ledger = budget.BudgetLedger(root, now=NOW)
     barrier.wait(timeout=20)
     accepted = 0
+    failures = []
     for _ in range(10):
         try:
             ledger.reserve("openai",1)
             accepted += 1
-        except budget.BudgetError:
-            pass
-    queue.put(accepted)
+        except budget.BudgetError as error:
+            cause = error.__context__
+            trace = cause.__traceback__ if cause is not None else error.__traceback__
+            lines = []
+            while trace is not None:
+                lines.append((Path(trace.tb_frame.f_code.co_filename).name, trace.tb_lineno))
+                trace = trace.tb_next
+            failures.append((type(cause).__name__, getattr(cause, "sqlite_errorcode", None), lines))
+    queue.put((accepted, failures))
 
 
 def crash_before_publication(root):
@@ -244,18 +251,23 @@ class BudgetTests(unittest.TestCase):
             queue.close()
 
     def test_six_simultaneous_first_processes_all_reserve_under_the_limit(self):
+        for round_number in range(10):
+            with self.subTest(round=round_number), tempfile.TemporaryDirectory() as directory:
+                self._first_process_batch(Path(directory))
+
+    def _first_process_batch(self, root):
         context = multiprocessing.get_context("spawn")
         queue, barrier = context.Queue(), context.Barrier(6)
-        workers = [context.Process(target=first_process_reservations,args=(str(self.root),barrier,queue)) for _ in range(6)]
+        workers = [context.Process(target=first_process_reservations,args=(str(root),barrier,queue)) for _ in range(6)]
         try:
             for process in workers:
                 process.start()
             for process in workers:
                 process.join(timeout=30)
                 self.assertEqual(process.exitcode,0)
-            self.assertEqual([queue.get(timeout=3) for _ in workers],[10]*6)
-            self.assertEqual(self.ledger.snapshot(1)["paid_requests"],60)
-            self.assertEqual([path.name for path in self.path.parent.iterdir()],["budget.sqlite3"])
+            self.assertEqual([queue.get(timeout=3) for _ in workers],[(10, [])]*6)
+            self.assertEqual(budget.BudgetLedger(root,now=NOW).snapshot(1)["paid_requests"],60)
+            self.assertEqual([path.name for path in (root/"runtime").iterdir()],["budget.sqlite3"])
         finally:
             for process in workers:
                 if process.is_alive():
