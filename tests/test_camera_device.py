@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from jarvis.devices import run_camera
+from jarvis.handcontrol import CameraBusy
 from jarvis.server import Service
 
 
@@ -138,6 +139,40 @@ class CameraDeviceTests(unittest.TestCase):
         self.assertEqual((world.faults, len(world.captures), world.reads), (1, 1, 12))
         self.assertTrue(world.service.presence.active)
         self.assertEqual(world.service.snapshot()["camera"], "fault")
+
+    def test_restart_cannot_slip_in_before_a_read_fault_is_reported(self):
+        def script(read, now):
+            if read == 12:
+                world.service.command("inactive")
+                with self.assertRaises(CameraBusy):
+                    world.service.command("active")
+            return None
+        world = World(script, until=5)
+        world.run()
+        self.assertEqual((world.faults, len(world.captures)), (1, 1))
+        self.assertIsNone(world.service.camera.owner)
+
+    def assert_fault_precedes_lease_close(self, world):
+        closed, seen = world.service.presence_camera_closed, []
+        def presence_camera_closed(lease):
+            closed(lease)
+            if not seen:
+                world.service.command("inactive")
+                world.service.command("active")
+                seen.append(world.faults)
+        world.service.presence_camera_closed = presence_camera_closed
+        world.on_wait = lambda world: seen.append(world.service.snapshot()["camera"]) if len(seen) == 1 else None
+        world.run()
+        self.assertEqual(seen[:2], [1, "waiting"])
+
+    def test_read_fault_is_not_attributed_to_a_session_restarted_after_close(self):
+        self.assert_fault_precedes_lease_close(World(lambda read, now: None if read <= 12 else 1, until=3))
+
+    def test_open_failure_is_not_attributed_to_a_session_restarted_after_close(self):
+        world = World(lambda read, now: 1, until=3)
+        Capture = world.cv2.VideoCapture
+        world.cv2.VideoCapture = type("Unopened", (Capture,), {"isOpened": lambda self: len(world.captures) > 1})
+        self.assert_fault_precedes_lease_close(world)
 
     def test_stop_during_failures_returns_promptly_and_releases_everything(self):
         service, stop, captures = Service(FakeActions()), threading.Event(), []

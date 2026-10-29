@@ -655,9 +655,14 @@ function boot(api) {
     if (how.push) history.pushState({jarvisStep: index}, "", hash);
     else if (how.replace) history.replaceState({jarvisStep: index}, "", hash);
     lockControls();
-    if (how.focus) {
-      (result ? $("plan-title") : control(index)).focus({preventScroll: true});
+    const focusTitle = () => {
+      if (state.step !== index) return;
+      (result ? $("plan-title") : $(STEPS[index] + "-title")).focus({preventScroll: true});
       window.scrollTo(0, 0);
+    };
+    if (how.focus) {
+      if (how.pop) window.setTimeout(focusTitle, 0);
+      else focusTitle();
     }
   }
 
@@ -686,7 +691,7 @@ function boot(api) {
       if (!saved) {
         if (how.pop) history.replaceState({jarvisStep: state.step}, "", "#" + STEPS[state.step]);
         stepError(MESSAGES.save);
-        control(state.step).focus();
+        $(STEPS[state.step] + "-title").focus();
         return;
       }
     }
@@ -1004,7 +1009,7 @@ function boot(api) {
       finish({pop: true});
       return;
     }
-    show(index, {focus: true});
+    show(index, {focus: true, pop: true});
   });
   $("key-form").addEventListener("submit", saveKey);
   $("import-choices").addEventListener("change", () => {

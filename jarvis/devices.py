@@ -44,9 +44,10 @@ def run_camera(service, stop: threading.Event, device=0):
                     if camera is not None:
                         camera.release()
                         camera = None
+                    # Report while the lease still blocks a restart, so the fault cannot land on a fresh session.
+                    service.camera_fault()
                     service.presence_camera_closed(lease)
                     lease = None
-                    service.camera_fault()
                     stop.wait(0.5)
                     continue
                 failures = 0
@@ -59,9 +60,9 @@ def run_camera(service, stop: threading.Event, device=0):
                     faulted_session = _presence_session(service)
                     camera.release()
                     camera = None
+                    service.camera_fault()
                     service.presence_camera_closed(lease)
                     lease = None
-                    service.camera_fault()
                 stop.wait(0.15)
                 continue
             failures = 0

@@ -179,7 +179,7 @@ async function click(selector) {
   await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 }
 async function key(name) {
-  const codes = {ArrowRight: 39, ArrowLeft: 37, Home: 36, End: 35, Escape: 27, Enter: 13};
+  const codes = {ArrowRight: 39, ArrowLeft: 37, Home: 36, End: 35, Escape: 27, Enter: 13, Tab: 9};
   for (const type of ["keyDown", "keyUp"]) await send("Input.dispatchKeyEvent", {type, key: name, code: name, windowsVirtualKeyCode: codes[name]});
   await sleep(30);
 }
@@ -187,6 +187,7 @@ async function nextStep(expected) {
   await click("#next");
   await waitFor(`(() => { const r = !document.getElementById('result').hidden; const s = [...document.querySelectorAll('#wizard .step')].find(n => !n.hidden); return ${JSON.stringify(expected)} === (r ? 'plan' : s && s.dataset.step); })()`, "step " + expected);
   await sleep(30);
+  equal(await focused(), expected === "plan" ? "plan-title" : expected + "-title", "Next focuses the question heading, never its picker: " + expected);
 }
 async function noOverflow(label) {
   const result = await evaluate("[document.documentElement.scrollWidth, window.innerWidth]");
@@ -269,7 +270,9 @@ async function hostedDesktop() {
   await select("role", "handsfree");
   equal(await text("role-hint"), catalog.roles.find((r) => r.id === "handsfree").hint, "purpose hint follows the choice");
   await nextStep("budget");
-  equal(await focused(), "budget", "focus moves to the slider");
+  equal(await focused(), "budget-title", "focus moves to the question heading");
+  await key("Tab");
+  equal(await focused(), "budget", "the slider remains next in keyboard order");
   equal(await text("progress"), "Question 2 of 6", "progress on question 2");
   equal(await evaluate("location.hash"), "#budget", "question 2 address");
   check(await visible("back"), "Back shown from question 2");
@@ -300,7 +303,7 @@ async function hostedDesktop() {
   await click("#back");
   await waitFor("location.hash === '#budget'", "Back button");
   equal(await evaluate("[document.getElementById('budget-exact').value, document.getElementById('budget-value').textContent]"), ["2500", "$2,500 a month"], "Back keeps the typed amount");
-  equal(await focused(), "budget", "Back moves focus to the question");
+  equal(await focused(), "budget-title", "Back focuses the question heading without opening a control");
   await send("Runtime.evaluate", {expression: "history.back()"});
   await waitFor("location.hash === '#role'", "browser Back");
   equal(await currentStep(), "role", "browser Back shows question 1");
@@ -356,7 +359,7 @@ async function hostedDesktop() {
   await waitFor("location.hash === '#plan' && !document.getElementById('result').hidden", "browser Forward to the plan");
   await click('[data-action="change"]');
   await waitFor("location.hash === '#role'", "change answers");
-  equal(await focused(), "role", "Change answers focuses the first question");
+  equal(await focused(), "role-title", "Change answers focuses the first heading without opening a picker");
   equal(await evaluate("role.value"), "developer", "Change answers keeps the answers");
 
   for (const choices of [{role: "developer", budget: 37, existing: "openai", dictation: "vosk", reply: "cloud_voice", automation: "calendar_email"},
@@ -451,7 +454,7 @@ async function localFlow() {
   await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.save)}`, "save error");
   equal(await currentStep(), "automation", "failed save stays on the last question");
   check(!(await evaluate("document.getElementById('next').disabled")), "Next is usable again after a failed save");
-  equal(await focused(), "automation", "focus returns to the question after a failed save");
+  equal(await focused(), "automation-title", "a failed save focuses the heading without opening a picker");
   await shot("20-local-save-failed");
   delete mock.routes["POST /api/quickstart/save"];
   await nextStep("plan");

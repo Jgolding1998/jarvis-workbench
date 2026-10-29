@@ -33,13 +33,13 @@
       </div>
 
       <section class="step" data-step="role">
-        <h1><label for="role">What will you mostly use Jarvis for?</label></h1>
+        <h1 id="role-title" tabindex="-1"><label for="role">What will you mostly use Jarvis for?</label></h1>
         <select id="role" name="role" aria-describedby="progress role-hint step-error"></select>
         <p id="role-hint" class="hint"></p>
       </section>
 
       <section class="step" data-step="budget" hidden>
-        <h1><label for="budget">Monthly budget for paid AI</label></h1>
+        <h1 id="budget-title" tabindex="-1"><label for="budget">Monthly budget for paid AI</label></h1>
         <output id="budget-value" for="budget budget-exact" class="budget-value">$0, free only</output>
         <input id="budget" name="budget" type="range" min="0" max="1000" step="1" value="0" aria-describedby="progress budget-hint">
         <div class="ticks" aria-hidden="true"><span>$0</span><span>$500</span><span>$1,000</span></div>
@@ -51,25 +51,25 @@
       </section>
 
       <section class="step" data-step="existing" hidden>
-        <h1><label for="existing">Which AI do you already have?</label></h1>
+        <h1 id="existing-title" tabindex="-1"><label for="existing">Which AI do you already have?</label></h1>
         <select id="existing" name="existing" aria-describedby="progress existing-hint step-error"></select>
         <p id="existing-hint" class="hint"></p>
       </section>
 
       <section class="step" data-step="dictation" hidden>
-        <h1><label for="dictation">How do you want to give Jarvis words?</label></h1>
+        <h1 id="dictation-title" tabindex="-1"><label for="dictation">How do you want to give Jarvis words?</label></h1>
         <select id="dictation" name="dictation" aria-describedby="progress dictation-hint step-error"></select>
         <p id="dictation-hint" class="hint"></p>
       </section>
 
       <section class="step" data-step="reply" hidden>
-        <h1><label for="reply">How should AI replies reach you?</label></h1>
+        <h1 id="reply-title" tabindex="-1"><label for="reply">How should AI replies reach you?</label></h1>
         <select id="reply" name="reply" aria-describedby="progress reply-hint step-error"></select>
         <p id="reply-hint" class="hint"></p>
       </section>
 
       <section class="step" data-step="automation" hidden>
-        <h1><label for="automation">Anything to automate later? (optional)</label></h1>
+        <h1 id="automation-title" tabindex="-1"><label for="automation">Anything to automate later? (optional)</label></h1>
         <select id="automation" name="automation" aria-describedby="progress automation-hint step-error"></select>
         <p id="automation-hint" class="hint"></p>
       </section>
