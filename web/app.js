@@ -1,6 +1,10 @@
 "use strict";
 let token = "";
 let exiting = false;
+let statusInstance = "";
+let statusSequence = 0;
+let pollAbort = null;
+let pollError = false;
 const $ = (id) => document.getElementById(id);
 async function send(path, data) {
   if (exiting) return;
@@ -10,8 +14,37 @@ async function send(path, data) {
   $("error").hidden = true;
   if (!exiting) render(result);
 }
-function showError(error) { if (exiting) return; $("error").textContent = error.message; $("error").hidden = false; }
+function showError(error) { if (exiting) return; pollError = false; $("error").textContent = error.message; $("error").hidden = false; }
+function endSession(title, note) {
+  exiting = true;
+  clearInterval(pollTimer);
+  if (pollAbort) pollAbort.abort();
+  token = "";
+  $("state").textContent = title;
+  $("state-note").textContent = note;
+  $("orb").classList.remove("running");
+  $("pad").classList.remove("live");
+  $("virtual-cursor").hidden = true;
+  $("hand-label").textContent = "OFF";
+  $("armed-label").textContent = "DISARMED";
+  $("error").hidden = true;
+  document.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
+}
 function render(state) {
+  if (exiting) return;
+  if (typeof state.instance !== "string" || !/^[0-9a-f]{16}$/.test(state.instance)
+      || !Number.isSafeInteger(state.sequence) || state.sequence < 1) throw new Error("Session unavailable");
+  if (statusInstance && statusInstance !== state.instance) {
+    endSession("Jarvis restarted", "Reload this tab to connect to the new local session.");
+    $("armed-label").textContent = "RELOAD REQUIRED";
+    $("hand-label").textContent = "UNKNOWN";
+    $("people").textContent = "?";
+    $("camera").textContent = "Unknown";
+    return;
+  }
+  statusInstance = state.instance;
+  if (state.sequence <= statusSequence) return;
+  statusSequence = state.sequence;
   $("mode").textContent = state.hand && state.hand.allowed ? (state.hand.mode === "watching" ? "LOCAL HAND CAMERA" : "LOCAL HARDWARE READY") : state.demo ? "SAFE DEMO" : "LOCAL CAMERA";
   $("state").textContent = state.active ? (state.action_error ? "Action failed" : state.camera === "fault" ? "Camera unavailable" : "Guard active") : "Standby";
   $("state-note").textContent = state.action_error || (state.active ? (state.established ? "Presence established. Policy is evaluating local observations." : "Waiting to establish your presence in the camera view.") : "Camera is idle. Say or type active when you are ready.");
@@ -83,30 +116,52 @@ document.querySelectorAll("[data-gesture]").forEach((button) => button.addEventL
 $("hand-stop").addEventListener("click", () => send("/api/command", {command: "stop mouse"}).catch(showError));
 $("hand-arm").addEventListener("click", () => send("/api/hand/arm", {voice: $("hand-voice").checked, move_cursor: $("hand-cursor").checked}).catch(showError));
 $("exit").addEventListener("click", async () => {
+  if (exiting) return;
   $("exit").disabled = true;
   try {
     const response = await fetch("/api/setup/exit", {method: "POST", headers: {"Content-Type": "application/json", "X-Jarvis-Token": token}, body: "{}"});
     if (!response.ok || (await response.json()).stopped !== true) throw new Error("Could not exit Jarvis. Try again.");
-    exiting = true;
-    clearInterval(pollTimer);
-    $("state").textContent = "Jarvis stopped";
-    $("state-note").textContent = "This local app has closed. You can close this tab.";
-    $("orb").classList.remove("running");
-    $("pad").classList.remove("live");
-    $("virtual-cursor").hidden = true;
-    $("hand-label").textContent = "OFF";
-    $("armed-label").textContent = "DISARMED";
-    $("error").hidden = true;
-    document.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
-  } catch (error) { $("exit").disabled = false; showError(new Error("Could not exit Jarvis. Try again.")); }
+    if (exiting) return;
+    endSession("Jarvis stopped", "This local app has closed. You can close this tab.");
+  } catch (error) { if (!exiting) $("exit").disabled = false; showError(new Error("Could not exit Jarvis. Try again.")); }
 });
-async function refresh() { if (exiting) return; try { const response = await fetch("/api/status"); if (!response.ok) throw new Error("Session unavailable"); const state = await response.json(); if (!exiting) render(state); } catch (error) { if (!exiting) showError(error); } }
-fetch("/api/session").then((response) => response.json()).then(async (session) => {
+async function refresh() {
+  if (exiting || !token || pollAbort) return;
+  const controller = new AbortController();
+  pollAbort = controller;
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch("/api/status", {signal: controller.signal});
+    if (!response.ok) throw new Error("Session unavailable");
+    const state = await response.json();
+    if (!exiting && !controller.signal.aborted) {
+      render(state);
+      if (pollError) { $("error").hidden = true; pollError = false; }
+    }
+  } catch (error) {
+    if (!exiting) {
+      showError(controller.signal.aborted ? new Error("Status request timed out. Retrying automatically.") : error);
+      pollError = true;
+    }
+  } finally {
+    clearTimeout(timeout);
+    if (pollAbort === controller) pollAbort = null;
+  }
+}
+fetch("/api/session").then((response) => {
+  if (!response.ok) throw new Error("Session unavailable");
+  return response.json();
+}).then(async (session) => {
+  if (exiting) return;
+  if (typeof session.instance !== "string" || !/^[0-9a-f]{16}$/.test(session.instance)) throw new Error("Session unavailable");
+  statusInstance = session.instance;
   token = session.token;
   await refresh();
+  if (exiting) return;
   const response = await fetch("/api/setup/diagnostics");
   if (!response.ok) return;
   const report = await response.json();
+  if (exiting) return;
   $("setup-link").hidden = report.setup_available !== true;
   $("exit").hidden = report.can_exit !== true;
 }).catch(showError);

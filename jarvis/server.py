@@ -49,6 +49,8 @@ class Service:
         self.started = clock()
         self._presence_lease = self._hand_lease = None
         self._presence_generation = 0
+        self._status_instance = secrets.token_hex(8)
+        self._status_sequence = 0
         if hand_runtime is not None:
             hand_runtime.bind(self.camera, self._hand_closed)
 
@@ -229,13 +231,15 @@ class Service:
 
     def snapshot(self):
         with self.lock:
+            self._status_sequence += 1
             hand = self.hand.snapshot()
             if self.hand_runtime is not None:
                 runtime = self.hand_runtime.snapshot()
                 hand["state"], hand["reason"] = runtime["state"], runtime["reason"]
                 if hand["mode"] == "watching":
                     hand.update({key: value for key, value in runtime.items() if key in {"cursor", "clicks"}})
-            return {**self.presence.snapshot(self.clock()), "demo": self.actions.demo,
+            return {**self.presence.snapshot(self.clock()), "instance": self._status_instance,
+                    "sequence": self._status_sequence, "demo": self.actions.demo,
                     "allow_lock": self.actions.demo or self.actions.allow_lock,
                     "allow_sheet": self.actions.demo or self.actions.allow_sheet,
                     "voice": self.voice, "events": list(self.events), "action_error": self.action_error,
@@ -418,7 +422,7 @@ def make_handler(service, token, setup=None):
                 self._send(404, {"error": "Setup runs in the window that started Jarvis"})
                 return
             if self.path == "/api/session":
-                self._send(200, {"token": token})
+                self._send(200, {"token": token, "instance": service._status_instance})
             elif self.path == "/api/status":
                 self._send(200, service.snapshot())
             elif self.path == "/api/setup/diagnostics":

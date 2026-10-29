@@ -39,7 +39,7 @@ On Windows, an Esc watcher polls `GetAsyncKeyState` only while hand control runs
 
 `web/setup.html`, `setup.js`, `setup.css`, and `quickstart-catalog.json` provide role and tool dropdowns plus a monthly allowance slider. `jarvis/quickstart.py` mirrors the browser recommendation and parity tests compare plans at supported budget boundaries. Hosted mode fetches static assets beside the page and never calls a loopback address or collects an API key.
 
-Local setup adds write-only key storage, explicit package installation, and a desktop launch route. `jarvis/onboarding.py` saves only the three choices in `runtime/quickstart.json` using atomic replacement. The installer has one background job; consent is required and choices cannot change during installation. Complete portable packages use their included dependencies. Source installations use the existing reviewed package installer and a project `.venv`. A fixed subprocess command opens the selected desktop feature idle. Its arguments never come from arbitrary user text. Legacy planner endpoints remain validated for existing clients.
+Local setup adds write-only key storage, explicit package installation, and a desktop launch route. `jarvis/onboarding.py` saves the six setup choices in `runtime/quickstart.json` using atomic replacement. The installer has one background job; consent is required and choices cannot change during installation. Complete portable packages use their included dependencies. Source installations use the existing reviewed package installer and a project `.venv`. A fixed subprocess command opens the selected desktop feature idle. Its arguments never come from arbitrary user text. Legacy planner endpoints remain validated for existing clients.
 
 `Start-Jarvis.cmd` finds Python 3.11 or newer for source installations. `Start-Jarvis-Windows.cmd` uses the portable package's isolated Python runtime. Both open safe setup through `jarvis.launcher`; neither elevates privileges or enables devices.
 
@@ -48,6 +48,8 @@ Local setup adds write-only key storage, explicit package installation, and a de
 The server binds to IPv4 loopback only. It accepts an exact `127.0.0.1:<port>` Host header and rejects a foreign Origin. Mutations require a fresh per-process session token and JSON content type. Bodies are bounded at 2 KiB for desktop actions, 8 KiB for the legacy planner, and 20,000 bytes for the quick setup's bounded chat and key fields. Parsing rejects duplicate keys, non-finite numbers, excessive nesting, and unknown fields. There are no CORS grants, arbitrary file routes, shell command endpoints, or telemetry.
 
 The browser receives only state and bounded event messages. A restrictive Content Security Policy blocks external scripts, framing, and external connections. UI text uses `textContent`. Requests and session tokens are not logged.
+
+Dashboard snapshots carry a nonsecret instance identifier and an increasing sequence assigned under the service lock. Delayed responses cannot replace newer state. If the service restarts, the old page stops sending actions and asks for a reload to obtain the new session token.
 
 This boundary protects against an unrelated website trying to operate the local dashboard. It does not protect against a malicious process already running as the same operating-system user or a compromised browser extension. Do not expose this development server through a proxy, port forward, or shared network interface.
 

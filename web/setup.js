@@ -501,6 +501,8 @@ const MESSAGES = {
   install: "Install did not start. Try again.",
   installIdle: "Downloads only what your plan needs. Nothing is switched on.",
   installRunning: "Installing. You can keep this page open.",
+  installChecking: "The install status is temporarily unavailable. It may still be running; checking again shortly.",
+  installCheckLater: "Installation may still be running. Reload this page to continue checking its status.",
   installReady: "Selected tools are installed. Nothing was switched on.",
   installIncluded: "This Jarvis package already includes the selected tools, so there is nothing to install. Nothing is switched on. Choose Open dashboard when you are ready.",
   installError: "Install stopped before finishing. Check your internet connection, then choose Install selected tools again.",
@@ -532,7 +534,7 @@ function boot(api) {
   const meta = document.querySelector('meta[name="jarvis-mode"]');
   const forced = meta ? meta.content : "auto";
   const RESULT = STEPS.length;
-  const state = {catalog: null, choices: null, step: 0, token: "", local: false, server: null, phone: false, busy: false, polls: 0,
+  const state = {catalog: null, choices: null, step: 0, token: "", local: false, server: null, phone: false, busy: false, pollGeneration: 0, pollAbort: null,
     touched: new Set(), reader: null, speaking: false};
   const money = (value) => "$" + value.toFixed(2);
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
@@ -563,9 +565,10 @@ function boot(api) {
     $("notice").hidden = !message;
   }
 
-  async function localJson(path, body) {
+  async function localJson(path, body, signal) {
     if (!api.isLoopbackPage(location, forced) || (!state.local && path !== "/api/session" && path !== "/api/quickstart")) throw new Error("not local");
     const options = body === undefined ? {cache: "no-store"} : {method: "POST", cache: "no-store", headers: {"Content-Type": "application/json", "X-Jarvis-Token": state.token}, body: JSON.stringify(body)};
+    if (signal) options.signal = signal;
     const response = await fetch(path, options);
     if (!response.ok) {
       /* Only one error code is understood; any other body, including its text, is ignored. */
@@ -882,13 +885,36 @@ function boot(api) {
   }
 
   async function pollInstall() {
-    if (state.server.install !== "running" || state.polls > 600) return;
-    state.polls += 1;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    try { applyServer(await localJson("/api/quickstart")); } catch (error) { state.server.install = "error"; }
-    if (state.step === RESULT) render();
-    lockControls();
-    pollInstall();
+    const generation = ++state.pollGeneration;
+    if (state.pollAbort) state.pollAbort.abort();
+    const until = performance.now() + 45 * 60 * 1000;
+    let failures = 0;
+    for (let attempt = 0; attempt < 1800 && performance.now() < until; attempt += 1) {
+      if (closed() || generation !== state.pollGeneration || !installing()) return;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(10000, 1500 * 2 ** Math.min(failures, 3))));
+      if (closed() || generation !== state.pollGeneration || !installing()) return;
+      if (performance.now() >= until) break;
+      const controller = new AbortController();
+      state.pollAbort = controller;
+      const timeout = setTimeout(() => controller.abort(), Math.min(8000, until - performance.now()));
+      try {
+        const data = await localJson("/api/quickstart", undefined, controller.signal);
+        if (closed() || generation !== state.pollGeneration) return;
+        applyServer(data);
+        failures = 0;
+        if ([MESSAGES.installChecking, MESSAGES.installCheckLater].includes($("status").textContent)) status("");
+      } catch (error) {
+        if (closed() || generation !== state.pollGeneration) return;
+        failures += 1;
+        status(MESSAGES.installChecking);
+      } finally {
+        clearTimeout(timeout);
+        if (state.pollAbort === controller) state.pollAbort = null;
+      }
+      if (state.step === RESULT) render();
+      lockControls();
+    }
+    if (!closed() && generation === state.pollGeneration && installing()) status(MESSAGES.installCheckLater);
   }
 
   const actions = {
@@ -933,7 +959,6 @@ function boot(api) {
         applyServer(await localJson("/api/quickstart/install", {consent: true}));
         status("");
       } catch (error) { status(MESSAGES.install, true); }
-      state.polls = 0;
       pollInstall();
     },
     async launch() {
@@ -949,6 +974,8 @@ function boot(api) {
         await localJson("/api/setup/exit", {});
         stopSpeaking();
         document.body.classList.add("closed");
+        state.pollGeneration += 1;
+        if (state.pollAbort) state.pollAbort.abort();
         document.querySelectorAll("button, input, select, textarea").forEach((node) => { node.disabled = true; });
         status(MESSAGES.exited);
       } catch (error) { status(MESSAGES.exit, true); }

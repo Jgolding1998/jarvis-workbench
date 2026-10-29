@@ -973,6 +973,63 @@ async function websitePages() {
   await noOverflow("site mobile");
 }
 
+async function localInstallStatusRecovery() {
+  await viewport(1280, 900, false);
+  const choices = full({role: catalog.defaults.role, budget: 0, existing: "none"});
+  const reset = async () => {
+    mock.routes = {};
+    mock.state = freshState({choices, plan: lib.recommend(choices, catalog)});
+    mock.requests = [];
+    mock.installOutcome = "running";
+    await open("/setup");
+    await waitFor("!document.getElementById('result').hidden", "recovery plan shown");
+  };
+  await reset();
+  let failed = false;
+  route("GET /api/quickstart", (req, res) => {
+    if (!failed) { failed = true; return json(res, 503, {error: LEAK}); }
+    return json(res, 200, mock.state);
+  });
+  await click('[data-action="install"]');
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.installChecking)}`, "temporary status failure");
+  equal(await text("install-state"), MESSAGES.installRunning, "failed status read does not claim installation failed");
+  check(await evaluate("document.getElementById('install').disabled && document.getElementById('change').disabled"), "cannot start a duplicate install during a failed status read");
+  mock.state.install = {state: "ready", message: LEAK};
+  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "status check recovers", 10000);
+  check(!await evaluate("document.getElementById('launch').disabled"), "recovered status enables launch");
+  equal(mock.requests.filter(item => item.path === "/api/quickstart/install").length, 1, "recovery never resubmits the installer");
+  equal(await text("status"), "", "temporary status message clears after recovery");
+
+  await reset();
+  await evaluate("window.__installClockOffset=0; const clock=performance.now.bind(performance); Object.defineProperty(performance,'now',{configurable:true,value:()=>clock()+window.__installClockOffset});");
+  await click('[data-action="install"]');
+  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installRunning)}`, "slow install starts");
+  await evaluate("window.__installClockOffset=46*60*1000");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.installCheckLater)}`, "long install asks for status reload");
+  equal(await text("install-state"), MESSAGES.installRunning, "monitoring deadline does not invent an installer failure");
+  check(await evaluate("document.getElementById('install').disabled"), "monitoring deadline keeps duplicate install blocked");
+  mock.state.install = {state: "ready", message: LEAK};
+  await open("/setup");
+  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "reload checks actual installer result");
+
+  await reset();
+  let held = null;
+  route("POST /api/setup/exit", (req, res) => json(res, 200, {stopped: true}));
+  route("GET /api/quickstart", (req, res) => { held = res; });
+  await click('[data-action="install"]');
+  for (let tries = 0; !held && tries < 60; tries += 1) await sleep(50);
+  check(Boolean(held), "install status request is in flight");
+  await click('[data-action="exit"]');
+  await waitFor("document.body.classList.contains('closed')", "setup closes during status check");
+  const reads = mock.requests.filter(item => item.path === "/api/quickstart").length;
+  await sleep(2000);
+  equal(mock.requests.filter(item => item.path === "/api/quickstart").length, reads, "closed setup sends no further status checks");
+  check(await evaluate("document.getElementById('install').disabled && document.getElementById('launch').disabled"), "pending status cannot re-enable closed controls");
+  check(held.destroyed, "closing setup aborts the pending status read");
+  await noSecretAnywhere("after status recovery");
+  mock.installOutcome = "ready";
+}
+
 async function main() {
   const browser = findBrowser();
   if (!browser) { console.log("SKIP: no Chromium-based browser found (set JARVIS_TEST_BROWSER)"); return; }
@@ -1035,6 +1092,7 @@ async function main() {
     await localVariants();
     await localReadAloudGuard();
     await localBundledPackage();
+    await localInstallStatusRecovery();
     await websitePages();
     equal(external, [], "no requests left the local fixture server");
     check(!consoleText.join(" ").includes(SECRET), "key never logged to the console");

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import subprocess
@@ -18,6 +19,8 @@ from .budget import BudgetLedger, BudgetError
 CLOUD = frozenset({"nvidia", "openai", "anthropic"})
 STARTUP_SECONDS = 45
 EOF_SECONDS = 5
+CLOSE_JOIN_SECONDS = 10
+CLOSING = "Setup is closing. Start Jarvis again to continue."
 PROVIDERS = CLOUD | {"none", "ollama"}
 
 
@@ -46,6 +49,10 @@ class Onboarding:
         self._desktop_process = None
         self._launching = False
         self._closed = False
+        self._install_cancel = self._install_thread = None
+        # Saved-or-not flags only, read lazily and updated by this setup's own save, delete and chat key reads.
+        self._saved = {}
+        self._credential_lock = threading.Lock()
         self._included = False
         self._checked_feature = self._checked_ready = None
         try:
@@ -98,15 +105,20 @@ class Onboarding:
         except (ValueError, OSError, TypeError):
             raise OnboardingError("The saved allowance is unavailable. Paid AI is paused until you save valid setup choices.") from None
 
+    def _saved_flags(self):
+        """Whether a key is saved, per provider. Never key material. A failed check reports not saved and is retried."""
+        with self._credential_lock:
+            for provider in sorted(CLOUD - self._saved.keys()):
+                try:
+                    self._saved[provider] = bool(self._credentials().status(provider))
+                except (ValueError, OSError):
+                    pass
+            return {provider: self._saved.get(provider, False) for provider in sorted(CLOUD)}
+
     def snapshot(self):
         from .quickstart import recommend
         from .provider_client import catalog
-        credentials = {}
-        for provider in sorted(CLOUD):
-            try:
-                credentials[provider] = bool(self._credentials().status(provider))
-            except (ValueError, OSError):
-                credentials[provider] = False
+        credentials = self._saved_flags()
         with self._lock:
             limit = self._choices["budget"] if self._choices else 0
             try:
@@ -128,6 +140,8 @@ class Onboarding:
         choices = validate_choices(choices)
         plan = recommend(choices)
         with self._lock:
+            if self._closed:
+                raise OnboardingError(CLOSING)
             self._refresh_desktop()
             if self._install_state == "running":
                 raise OnboardingError("Wait for installation to finish before changing your setup.")
@@ -174,11 +188,19 @@ class Onboarding:
         return provider
 
     def save_key(self, provider, key):
-        self._credentials().save(self._provider(provider, cloud_only=True), key)
+        provider = self._provider(provider, cloud_only=True)
+        with self._credential_lock:
+            self._saved.pop(provider, None)
+            self._credentials().save(provider, key)
+            self._saved[provider] = True
         return self.snapshot()
 
     def delete_key(self, provider):
-        self._credentials().delete(self._provider(provider, cloud_only=True))
+        provider = self._provider(provider, cloud_only=True)
+        with self._credential_lock:
+            self._saved.pop(provider, None)
+            self._credentials().delete(provider)
+            self._saved[provider] = False
         return self.snapshot()
 
     def chat(self, provider, prompt, consent):
@@ -198,7 +220,10 @@ class Onboarding:
             if provider in {"openai", "anthropic"} and limit == 0:
                 raise OnboardingError("Paid AI is paused at a $0 allowance. Choose a free option or raise your monthly allowance.")
             if provider in CLOUD:
-                key = self._credentials().read(provider)
+                with self._credential_lock:  # Always a fresh read; it also corrects the saved flag.
+                    self._saved.pop(provider, None)
+                    key = self._credentials().read(provider)
+                    self._saved[provider] = bool(key)
                 if not key:
                     raise OnboardingError("Save your own API key for this provider first.")
             if provider in {"openai", "anthropic"}:
@@ -215,6 +240,8 @@ class Onboarding:
             raise OnboardingError("Confirm the package and model downloads first.")
         from .quickstart import recommend
         with self._lock:
+            if self._closed:
+                raise OnboardingError(CLOSING)
             self._refresh_desktop()
             if self._choices is None:
                 raise OnboardingError("Save your setup choices first.")
@@ -223,40 +250,53 @@ class Onboarding:
             if self._launching or self._desktop_url is not None:
                 raise OnboardingError("Close the desktop app before reinstalling its tools.")
             feature = self._feature(recommend(self._choices))
+            cancel = threading.Event()
+
+            def worker():
+                try:
+                    self._installer(feature)
+                    finished = True
+                except Exception:
+                    finished = False
+                with self._lock:
+                    if self._closed or cancel.is_set():  # A late finish never reports ready after close().
+                        self._install_state = "idle"
+                        self._install_message = "Setup closed before installation finished. Existing files were preserved."
+                    elif finished:
+                        self._installed_feature = feature
+                        self._install_state = "ready"
+                        self._install_message = "Your desktop tools are ready. Open the dashboard when you are ready."
+                    else:
+                        self._install_state = "error"
+                        self._install_message = "Installation did not finish. Existing files were preserved. Try again or follow the manual installation guide."
+
+            thread = threading.Thread(target=worker, daemon=True, name="jarvis-install")
+            self._install_cancel, self._install_thread = cancel, thread
             self._install_state = "running"
             self._included = False
             self._install_message = "Preparing the selected tools. Devices remain off."
-
-        def worker():
-            try:
-                self._installer(feature)
-            except Exception:
-                with self._lock:
-                    self._install_state = "error"
-                    self._install_message = "Installation did not finish. Existing files were preserved. Try again or follow the manual installation guide."
-            else:
-                with self._lock:
-                    self._installed_feature = feature
-                    self._install_state = "ready"
-                    self._install_message = "Your desktop tools are ready. Open the dashboard when you are ready."
-
-        threading.Thread(target=worker, daemon=True, name="jarvis-install").start()
+            thread.start()
         return self.snapshot()
 
     def _install(self, feature):
         from . import bundle
+        with self._lock:
+            cancel = self._install_cancel or threading.Event()
+        fetch = functools.partial(install_tools.download_model, cancel=cancel)
         if bundle.is_bundled(self.root):
             if not bundle.feature_ready(self.root, feature):
                 raise OnboardingError("The portable package is incomplete. Download a fresh release.")
             if feature == "hand":
-                install_tools.download_model(self.root)
+                fetch(self.root)
             return
-        install_tools.install(self.root, feature, install_tools.selected_packages(self.root, feature))
+        install_tools.install(self.root, feature, install_tools.selected_packages(self.root, feature), model_fetch=fetch, cancel=cancel)
 
     def launch(self, consent):
         if consent is not True:
             raise OnboardingError("Confirm opening the local desktop app first.")
         with self._lock:
+            if self._closed:
+                raise OnboardingError("Setup is closing. Start Jarvis again to open the desktop app.")
             self._refresh_desktop()
             if self._install_state != "ready":
                 raise OnboardingError("Finish installing the selected tools first.")
@@ -264,8 +304,6 @@ class Onboarding:
                 return {"url": self._desktop_url}
             if self._launching:
                 raise OnboardingError("The desktop app is already starting.")
-            if self._closed:
-                raise OnboardingError("Setup is closing. Start Jarvis again to open the desktop app.")
             self._launching = True
             feature = self._installed_feature
         try:
@@ -280,12 +318,20 @@ class Onboarding:
                 self._launching = False
 
     def close(self):
-        """Stop the desktop app this setup started, if any. Safe to call more than once; later launches are refused."""
+        """Stop this setup's installation and desktop app, if any. Safe to call more than once.
+
+        Later saves, installs and launches are refused. Cancelling the install stops its whole process tree; its
+        thread then gets a bounded wait."""
         with self._lock:
             self._closed = True
             process, self._desktop_process, self._desktop_url = self._desktop_process, None, None
+            cancel, worker = self._install_cancel, self._install_thread
+        if cancel is not None:
+            cancel.set()
         if process is not None:
             self._stop(process)
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(CLOSE_JOIN_SECONDS)
 
     @staticmethod
     def _stop(process, grace=None):

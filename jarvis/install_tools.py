@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, HTTPSHandler
@@ -34,10 +35,175 @@ FEATURES = {
 CHOICES = {"1": "camera", "2": "hand", "3": "voice", "4": "all"}
 CHECK_ENV = "import pathlib,sys; p=pathlib.Path(sys.argv[1]).resolve(); raise SystemExit(0 if sys.version_info >= (3,11) and pathlib.Path(sys.prefix).resolve()==p and sys.base_prefix!=sys.prefix else 1)"
 CHECK_OPENCV = "import importlib.metadata as m; import sys; names={d.metadata.get('Name','').lower().replace('_','-') for d in m.distributions()}; raise SystemExit(1 if names & {'opencv-python','opencv-python-headless','opencv-contrib-python-headless'} else 0)"
+COMMAND_SECONDS = 300
+POLL_SECONDS = 0.1
+STOP_SECONDS = 3
+# Windows: this helper runs the fixed setup command only after it is inside the kill-on-close job, so nothing the
+# command starts (a venv launcher's interpreter, pip, a build backend) can begin outside the job.
+GATE = ("import os,subprocess,sys\n"
+        "if sys.stdin.buffer.readline(32) != (str(os.getpid())+'\\n').encode('ascii'): raise SystemExit(125)\n"
+        "code=subprocess.call(sys.argv[1:],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,"
+        "shell=False,close_fds=True,creationflags=subprocess.CREATE_NO_WINDOW)\n"
+        "os._exit(code if code < 2**31 else code-2**32)\n")
 
 
 class SetupError(ValueError):
     pass
+
+
+class SetupCancelled(SetupError):
+    def __init__(self):
+        super().__init__("Setup closed before installation finished. Existing files were preserved.")
+
+
+def _check(cancel):
+    if cancel is not None and cancel.is_set():
+        raise SetupCancelled()
+
+
+class WindowsJob:
+    """Kill-on-close Job Object. Terminating it, or this process dying, ends the setup command and all it started."""
+
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes
+        self._k32 = k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        class Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_ulonglong * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        self.handle = k32.CreateJobObjectW(None, None)  # Not inheritable: only this process holds it.
+        if not self.handle:
+            raise OSError("CreateJobObject failed")
+        info = Extended()
+        info.BasicLimitInformation.LimitFlags = 0x2000 | 0x400  # KILL_ON_JOB_CLOSE | DIE_ON_UNHANDLED_EXCEPTION
+        if not k32.SetInformationJobObject(self.handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            self.close()
+            raise OSError("SetInformationJobObject failed")
+
+    def assign(self, pid):
+        process = self._k32.OpenProcess(0x0001 | 0x0100, False, pid)  # TERMINATE | SET_QUOTA
+        if not process:
+            raise OSError("OpenProcess failed")
+        try:
+            if not self._k32.AssignProcessToJobObject(self.handle, process):
+                raise OSError("AssignProcessToJobObject failed")
+        finally:
+            self._k32.CloseHandle(process)
+
+    def terminate(self):
+        if self.handle:
+            self._k32.TerminateJobObject(self.handle, 1)
+
+    def close(self):
+        if self.handle:
+            self._k32.CloseHandle(self.handle)
+            self.handle = None
+
+
+def _exited(process):
+    """True once the command's own process ended. On POSIX it stays unreaped, so its group id cannot be reused yet."""
+    if os.name == "nt" or not hasattr(os, "waitid"):
+        return process.poll() is not None
+    try:
+        return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    except ChildProcessError:
+        return True
+
+
+def _signal_group(process, signal_number):
+    try:
+        os.killpg(process.pid, signal_number)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _end(process, job):
+    """Stop what this command started, then reap it. Acts only on its own job or process group, never by name."""
+    if job is not None:
+        job.terminate()
+    else:
+        import signal
+        _signal_group(process, signal.SIGTERM)
+        deadline = time.monotonic() + STOP_SECONDS
+        while not _exited(process) and time.monotonic() < deadline:
+            time.sleep(POLL_SECONDS)
+        _signal_group(process, signal.SIGKILL)
+    try:
+        if process.stdin is not None:
+            process.stdin.close()
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=STOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def contained(argv, root, env, timeout=COMMAND_SECONDS, cancel=None):
+    """Run one fixed argv without a shell and return its exit code. On cancel, timeout, an error or normal exit,
+    everything it started is stopped before this returns. If this process is killed, the job (Windows) still is."""
+    _check(cancel)
+    deadline = time.monotonic() + timeout
+    job = process = None
+    stopped = None
+    try:
+        if os.name == "nt":
+            job = WindowsJob()
+            base = getattr(sys, "_base_executable", None) or sys.executable
+            process = subprocess.Popen([base, "-I", "-S", "-c", GATE, *argv], cwd=str(root), env=env, shell=False,
+                                       close_fds=True, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            job.assign(process.pid)
+            if cancel is None or not cancel.is_set():
+                process.stdin.write((str(process.pid) + "\n").encode("ascii"))
+                process.stdin.close()
+        else:
+            process = subprocess.Popen(list(argv), cwd=str(root), env=env, shell=False, close_fds=True,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
+        pause = threading.Event() if cancel is None else cancel
+        while not _exited(process):
+            if cancel is not None and cancel.is_set():
+                stopped = "cancelled"
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                stopped = "timeout"
+                break
+            pause.wait(min(POLL_SECONDS, remaining))
+    finally:
+        try:
+            if process is not None:
+                _end(process, job)
+        finally:
+            if job is not None:
+                job.close()
+    if stopped == "cancelled":
+        raise SetupCancelled()
+    if stopped == "timeout":
+        raise subprocess.TimeoutExpired(list(argv), timeout)
+    return process.returncode
 
 
 def reject_links(path):
@@ -99,21 +265,26 @@ def safe_environment(temporary=None):
     return env
 
 
-def command(argv, root, env, run=subprocess.run):
+def command(argv, root, env, run=None, *, cancel=None):
+    """Run a fixed setup command. The default runner contains its process tree; tests may inject run."""
+    _check(cancel)
     try:
-        result = run(list(argv), cwd=str(root), env=env, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300, check=False)
+        if run is None:
+            returncode = contained(argv, root, env, COMMAND_SECONDS, cancel)
+        else:
+            returncode = run(list(argv), cwd=str(root), env=env, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=COMMAND_SECONDS, check=False).returncode
     except subprocess.TimeoutExpired:
         raise SetupError("Setup exceeded its five-minute command timeout. Existing files were preserved.") from None
     except OSError:
         raise SetupError("A setup command could not start. Existing files were preserved.") from None
-    if result.returncode != 0:
-        raise SetupError(f"A setup command did not finish successfully (exit code {int(result.returncode)}). Raw output is hidden.")
+    if returncode != 0:
+        raise SetupError(f"A setup command did not finish successfully (exit code {int(returncode)}). Raw output is hidden.")
 
 
-def environment(root, run=subprocess.run):
+def environment(root, run=None, cancel=None):
     venv = local_path(root, ".venv")
     if not venv.exists():
-        command([sys.executable, "-I", "-m", "venv", "--copies", str(venv)], root, safe_environment(), run)
+        command([sys.executable, "-I", "-m", "venv", "--copies", str(venv)], root, safe_environment(), run, cancel=cancel)
     config = local_path(root, ".venv", "pyvenv.cfg")
     python = local_path(root, ".venv", "Scripts", "python.exe") if os.name == "nt" else local_path(root, ".venv", "bin", "python")
     if not venv.is_dir() or not config.is_file() or not python.is_file() or config.stat().st_size > 8192:
@@ -124,7 +295,7 @@ def environment(root, run=subprocess.run):
     temporary = local_path(root, ".venv", ".install-tmp")
     temporary.mkdir(exist_ok=True)
     env = safe_environment(temporary)
-    command([str(python), "-I", "-c", CHECK_ENV, str(venv)], root, env, run)
+    command([str(python), "-I", "-c", CHECK_ENV, str(venv)], root, env, run, cancel=cancel)
     return python, venv, env
 
 
@@ -147,7 +318,8 @@ def publish_model(temporary, target, *, windows=None):
         raise SetupError("The model could not be finalized. No ready model was installed.") from None
 
 
-def download_model(root, *, opener=None, expected_sha=MODEL_SHA256):
+def download_model(root, *, opener=None, expected_sha=MODEL_SHA256, cancel=None):
+    _check(cancel)
     directory = local_path(root, "models")
     directory.mkdir(exist_ok=True)
     target = local_path(root, "models", "hand_landmarker.task")
@@ -175,6 +347,7 @@ def download_model(root, *, opener=None, expected_sha=MODEL_SHA256):
                     raise SetupError("The model exceeds the supported download size.")
                 digest, size, deadline = hashlib.sha256(), 0, time.monotonic() + 90
                 while True:
+                    _check(cancel)
                     if time.monotonic() > deadline:
                         raise SetupError("The model download exceeded its deadline.")
                     block = response.read1(65536)
@@ -190,6 +363,7 @@ def download_model(root, *, opener=None, expected_sha=MODEL_SHA256):
             output.flush()
             os.fsync(output.fileno())
         local_path(root, "models", "hand_landmarker.task")
+        _check(cancel)
         publish_model(temporary, target)
     except SetupError:
         raise
@@ -211,27 +385,30 @@ def reviewed_manifest(packages):
     return [source if package == "srt==3.5.3" else package for package in packages]
 
 
-def install(root, feature, packages, *, run=subprocess.run, model_fetch=download_model):
+def install(root, feature, packages, *, run=None, model_fetch=download_model, cancel=None):
+    """Install one feature. A set cancel event stops the running command's process tree and skips later steps."""
+    _check(cancel)
     if packages != selected_packages(root, feature):
         raise SetupError("The selected package list changed. Open setup again.")
-    python, venv, env = environment(root, run)
+    python, venv, env = environment(root, run, cancel)
     if feature in {"camera", "hand", "all"}:
-        command([str(python), "-I", "-c", CHECK_OPENCV], root, env, run)
+        command([str(python), "-I", "-c", CHECK_OPENCV], root, env, run, cancel=cancel)
     manifest = None
     try:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=venv, prefix="jarvis-optional-", suffix=".txt", delete=False) as handle:
             manifest = Path(handle.name)
             handle.write("\n".join(reviewed_manifest(packages)) + "\n")
         options = ["--use-pep517"] if "srt==3.5.3" in packages else []
-        command([str(python), "-I", "-m", "pip", "install", "--isolated", "--only-binary=:all:", "--index-url", "https://pypi.org/simple", "--disable-pip-version-check", "--no-input", "--no-cache-dir", *options, "--requirement", str(manifest)], root, env, run)
+        command([str(python), "-I", "-m", "pip", "install", "--isolated", "--only-binary=:all:", "--index-url", "https://pypi.org/simple", "--disable-pip-version-check", "--no-input", "--no-cache-dir", *options, "--requirement", str(manifest)], root, env, run, cancel=cancel)
     finally:
         if manifest is not None:
             manifest.unlink(missing_ok=True)
     if feature in {"hand", "all"}:
+        _check(cancel)
         model_fetch(root)
 
 
-def main(*, root=None, ask=input, tell=print, run=subprocess.run, model_fetch=download_model):
+def main(*, root=None, ask=input, tell=print, run=None, model_fetch=download_model):
     if sys.version_info < (3, 11):
         tell("Python 3.11 or newer is required. Install Python from python.org and open this tool again.")
         return 2

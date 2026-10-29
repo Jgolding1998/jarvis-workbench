@@ -594,7 +594,7 @@ class DesktopLifecycleTests(unittest.TestCase):
         repo = str(Path(__file__).resolve().parents[1])
         env = {key: value for key, value in os.environ.items() if key.upper() in {"SYSTEMROOT", "WINDIR"}}
         parent = subprocess.run([sys.executable, "-I", "-c", PARENT, repo, str(self.root)], capture_output=True,
-                                text=True, timeout=60, env=env)
+                                text=True, timeout=60, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.assertEqual(parent.returncode, 15, parent.stderr[-500:])
         pid = int(parent.stdout.split()[0])
         marker = self.root / "stub-camera.txt"
@@ -614,7 +614,7 @@ class DesktopLifecycleTests(unittest.TestCase):
                 break
             time.sleep(.05)
         else:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self.fail("The desktop child outlived its forcibly stopped parent")
         self.assertEqual(marker.read_text(), "parent pipe closed")
 
@@ -638,6 +638,192 @@ class CloseFallbackTests(unittest.TestCase):
         process.kill.assert_called_once_with()
         self.assertEqual(process.wait.call_count, 3)
 
+
+
+class CountingVault(Vault):
+    def __init__(self):
+        super().__init__()
+        self.checks = 0
+        self.fail_next = False
+
+    def status(self, provider):
+        self.checks += 1
+        if self.fail_next:
+            self.fail_next = False
+            from jarvis.credential_store import CredentialError
+            raise CredentialError("unavailable")
+        return super().status(provider)
+
+
+class InstallLifecycleTests(unittest.TestCase):
+    """close() cancels this setup's install, and a closed setup never writes, spawns or reports ready."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.vault = CountingVault()
+        self.installs = []
+        self.manager = Onboarding(self.root, vault=self.vault, installer=self.installs.append,
+                                  launch=lambda feature: "http://127.0.0.1:12345/",
+                                  budget=BudgetLedger(self.root, now=lambda: datetime(2026, 10, 28, tzinfo=timezone.utc)),
+                                  responder=lambda provider, prompt, key=None: "Ready")
+        self.manager.save({"role": "office", "budget": 0, "existing": "none"})
+
+    def tearDown(self):
+        self.manager.close()
+        self.temp.cleanup()
+
+    def test_closed_setup_rejects_save_and_install_before_any_write_or_spawn(self):
+        saved = self.root / "runtime" / "quickstart.json"
+        before = saved.read_bytes()
+        self.manager.close()
+        with patch("subprocess.Popen", side_effect=AssertionError("No process allowed")), \
+                patch("tempfile.NamedTemporaryFile", side_effect=AssertionError("No write allowed")):
+            for attempt in (lambda: self.manager.save({"role": "creator", "budget": 0, "existing": "none"}),
+                            lambda: self.manager.start_install(True), lambda: self.manager.launch(True)):
+                with self.assertRaisesRegex(OnboardingError, "closing"):
+                    attempt()
+        self.assertEqual(saved.read_bytes(), before)
+        self.assertEqual(self.installs, [])
+        self.assertEqual(self.manager.snapshot()["install"]["state"], "idle")
+
+    def test_close_stops_a_running_install_tree_and_never_reports_ready(self):
+        from jarvis import install_tools
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_install_tools import STUB
+        folder = self.root / "stub"
+        folder.mkdir()
+        argv = [sys.executable, "-I", "-c", STUB, str(folder), "30", "0"]
+        self.manager._installer = lambda feature: install_tools.command(argv, self.root, install_tools.safe_environment(),
+                                                                        cancel=self.manager._install_cancel)
+        self.manager.start_install(True)
+        end = time.monotonic() + 10
+        while not (folder / "grandchild").exists() and time.monotonic() < end:
+            time.sleep(.02)
+        self.assertTrue((folder / "grandchild").exists())
+        started = time.monotonic()
+        self.manager.close()
+        self.assertLess(time.monotonic() - started, 8)
+        self.assertFalse(self.manager._install_thread.is_alive())
+        state = self.manager.snapshot()["install"]
+        self.assertEqual(state["state"], "idle")
+        self.assertIn("closed before installation finished", state["message"])
+        time.sleep(2.5)
+        self.assertFalse((folder / "late").exists())
+        with self.assertRaises(OnboardingError):
+            self.manager.launch(True)
+
+    def test_late_completion_after_close_cannot_mark_ready_and_join_is_bounded(self):
+        entered, release = threading.Event(), threading.Event()
+        def stubborn(feature):  # Ignores cancellation, like a step that cannot be interrupted.
+            entered.set()
+            release.wait(5)
+        self.manager._installer = stubborn
+        self.manager.start_install(True)
+        self.assertTrue(entered.wait(2))
+        with patch("jarvis.onboarding.CLOSE_JOIN_SECONDS", 0.1):
+            started = time.monotonic()
+            self.manager.close()
+            self.assertLess(time.monotonic() - started, 2)
+        release.set()
+        self.manager._install_thread.join(3)
+        self.assertEqual(self.manager.snapshot()["install"]["state"], "idle")
+        with self.assertRaises(OnboardingError):
+            self.manager.launch(True)
+
+    def test_close_racing_start_install_either_refuses_or_cancels(self):
+        for _ in range(20):
+            manager = Onboarding(self.root, vault=self.vault, installer=lambda feature: None,
+                                 budget=BudgetLedger(self.root, now=lambda: datetime(2026, 10, 28, tzinfo=timezone.utc)))
+            barrier = threading.Barrier(2)
+            outcome = []
+            def start():
+                barrier.wait()
+                try:
+                    manager.start_install(True)
+                    outcome.append("started")
+                except OnboardingError:
+                    outcome.append("refused")
+            thread = threading.Thread(target=start)
+            thread.start()
+            barrier.wait()
+            manager.close()
+            thread.join(5)
+            if manager._install_thread is not None:
+                manager._install_thread.join(5)
+                self.assertTrue(manager._install_cancel.is_set())
+            self.assertNotEqual(manager.snapshot()["install"]["state"], "ready", outcome)
+
+    def test_default_installer_passes_its_cancel_to_commands_and_model(self):
+        from jarvis import install_tools
+        calls = []
+        with patch.object(install_tools, "install", lambda *args, **options: calls.append(options)), \
+                patch.object(install_tools, "selected_packages", lambda root, feature: []), \
+                patch("jarvis.bundle.is_bundled", lambda root: False):
+            manager = Onboarding(self.root, vault=self.vault,
+                                 budget=BudgetLedger(self.root, now=lambda: datetime(2026, 10, 28, tzinfo=timezone.utc)))
+            manager.start_install(True)
+            manager._install_thread.join(5)
+        self.assertIs(calls[0]["cancel"], manager._install_cancel)
+        self.assertIs(calls[0]["model_fetch"].keywords["cancel"], manager._install_cancel)
+        self.assertIs(calls[0]["model_fetch"].func, install_tools.download_model)
+
+
+class CredentialFlagTests(unittest.TestCase):
+    """Saved-key flags are read once, then follow this setup's own save, delete and chat reads. Never key material."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.vault = CountingVault()
+        self.calls = []
+        self.manager = Onboarding(self.root, vault=self.vault, installer=lambda feature: None,
+                                  budget=BudgetLedger(self.root, now=lambda: datetime(2026, 10, 28, tzinfo=timezone.utc)),
+                                  responder=lambda provider, prompt, key=None: self.calls.append(key) or "Ready")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_polls_do_not_reread_keys_and_own_changes_update_flags(self):
+        self.manager.snapshot()
+        self.assertEqual(self.vault.checks, 3)
+        for _ in range(10):
+            self.manager.snapshot()
+        self.assertEqual(self.vault.checks, 3)
+        secret = "synthetic-private-vault-value"
+        self.assertTrue(self.manager.save_key("nvidia", secret)["credentials"]["nvidia"])
+        self.assertFalse(self.manager.delete_key("nvidia")["credentials"]["nvidia"])
+        self.assertEqual(self.vault.checks, 3)
+        self.manager.save_key("nvidia", secret)
+        self.assertEqual(set(map(type, self.manager._saved.values())), {bool})
+        self.assertNotIn(secret, repr(vars(self.manager)))
+
+    def test_failed_save_is_rechecked_not_assumed(self):
+        with self.assertRaises(ValueError):
+            self.manager.save_key("nvidia", "\n")
+        self.assertFalse(self.manager.snapshot()["credentials"]["nvidia"])
+        self.assertEqual(self.vault.checks, 3)
+
+    def test_failed_status_check_is_not_cached(self):
+        self.vault.values["anthropic"] = "synthetic"
+        self.vault.fail_next = True
+        first = self.manager.snapshot()["credentials"]
+        self.assertFalse(first["anthropic"])  # Reported as not saved while the store is unavailable, then retried.
+        self.assertTrue(self.manager.snapshot()["credentials"]["anthropic"])
+
+    def test_external_removal_shows_until_a_fresh_chat_read_then_fails_cleanly(self):
+        self.manager.save_key("nvidia", "synthetic-private-vault-value")
+        self.vault.values.pop("nvidia")  # Removed outside Jarvis, for example in Credential Manager.
+        self.assertTrue(self.manager.snapshot()["credentials"]["nvidia"])  # Accepted trade-off: not polled.
+        with self.assertRaisesRegex(OnboardingError, "Save your own API key"):
+            self.manager.chat("nvidia", "Hello", True)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(self.manager.snapshot()["credentials"]["nvidia"])
+        self.vault.values["nvidia"] = "synthetic-added-elsewhere"
+        self.manager._last_call = 0
+        self.assertEqual(self.manager.chat("nvidia", "Hello", True), {"reply": "Ready"})
+        self.assertEqual(self.calls, ["synthetic-added-elsewhere"])
+        self.assertTrue(self.manager.snapshot()["credentials"]["nvidia"])
 
 
 if __name__ == "__main__":

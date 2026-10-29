@@ -3,7 +3,10 @@ import io
 import os
 import stat
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -324,6 +327,157 @@ class InstallerTests(unittest.TestCase):
                 setup.download_model(self.root, opener=Opener(data), expected_sha=hashlib.sha256(data).hexdigest())
         self.assertFalse((self.root / "models" / "hand_landmarker.task").exists())
         self.assertEqual(list((self.root / "models").glob(".hand-model-*.tmp")), [])
+
+    def test_cancel_skips_every_later_step_and_the_model(self):
+        cancel, models = setup.threading.Event(), []
+        run = FakeRun()
+        cancel.set()
+        with self.assertRaises(setup.SetupCancelled):
+            setup.install(self.root, "hand", setup.selected_packages(self.root, "hand"), run=run, model_fetch=models.append, cancel=cancel)
+        self.assertEqual((run.calls, models), ([], []))
+        self.assertFalse((self.root / ".venv").exists())
+
+        cancel.clear()
+        def cancel_after_pip(argv, **kwargs):
+            result = run(argv, **kwargs)
+            if "pip" in argv:
+                cancel.set()
+            return result
+        with self.assertRaises(setup.SetupCancelled):
+            setup.install(self.root, "hand", setup.selected_packages(self.root, "hand"), run=cancel_after_pip, model_fetch=models.append, cancel=cancel)
+        self.assertEqual(models, [])
+
+    def test_cancelled_model_download_never_publishes(self):
+        data = b"model bytes"
+        cancel = setup.threading.Event()
+
+        class Cancelling(Opener):
+            def open(self, request, **kwargs):
+                cancel.set()
+                return super().open(request, **kwargs)
+        with self.assertRaises(setup.SetupCancelled):
+            setup.download_model(self.root, opener=Cancelling(data), expected_sha=hashlib.sha256(data).hexdigest(), cancel=cancel)
+        self.assertFalse((self.root / "models" / "hand_landmarker.task").exists())
+        self.assertEqual(list((self.root / "models").glob(".hand-model-*.tmp")), [])
+
+
+# Owned stub processes only: sys.executable running inline code that writes marker files in a temporary folder.
+STUB = ("import os,subprocess,sys,time,pathlib\n"
+        "d=pathlib.Path(sys.argv[1])\n"
+        "(d/'started').write_text('1')\n"
+        "flags=(subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.DETACHED_PROCESS) if os.name=='nt' else 0\n"
+        "subprocess.Popen([sys.executable,'-c','import pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(\"1\");time.sleep(2);pathlib.Path(sys.argv[2]).write_text(\"late\")',"
+        "str(d/'grandchild'),str(d/'late')],creationflags=flags)\n"
+        "while not (d/'grandchild').exists(): time.sleep(0.02)\n"
+        "time.sleep(float(sys.argv[2]))\n"
+        "raise SystemExit(int(sys.argv[3]))\n")
+
+
+class ContainedCommandTests(unittest.TestCase):
+    """The default runner stops everything a setup command started, including detached grandchildren."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.folder = Path(self.temporary.name)
+        self.env = setup.safe_environment()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def argv(self, seconds=30, code=0):
+        return [sys.executable, "-I", "-c", STUB, str(self.folder), str(seconds), str(code)]
+
+    def wait_for(self, name, seconds=10):
+        end = time.monotonic() + seconds
+        while not (self.folder / name).exists() and time.monotonic() < end:
+            time.sleep(0.02)
+        return (self.folder / name).exists()
+
+    def assert_tree_stopped(self):
+        time.sleep(2.5)  # Past the grandchild's own 2 s sleep.
+        self.assertFalse((self.folder / "late").exists(), "a grandchild kept running after the command was stopped")
+
+    def test_cancel_before_start_spawns_nothing(self):
+        cancel = setup.threading.Event()
+        cancel.set()
+        with patch("subprocess.Popen", side_effect=AssertionError("No process may start")):
+            with self.assertRaises(setup.SetupCancelled):
+                setup.command(self.argv(), self.folder, self.env, cancel=cancel)
+
+    def test_cancel_during_work_stops_the_tree_and_reaps(self):
+        cancel = setup.threading.Event()
+        threading.Thread(target=lambda: self.wait_for("grandchild") and cancel.set(), daemon=True).start()
+        started = time.monotonic()
+        with self.assertRaises(setup.SetupCancelled):
+            setup.command(self.argv(), self.folder, self.env, cancel=cancel)
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertTrue((self.folder / "grandchild").exists())
+        self.assert_tree_stopped()
+
+    def test_timeout_stops_the_tree_with_the_existing_message(self):
+        with patch.object(setup, "COMMAND_SECONDS", 1.5):
+            with self.assertRaisesRegex(setup.SetupError, "five-minute command timeout"):
+                setup.command(self.argv(), self.folder, self.env)
+        self.assert_tree_stopped()
+
+    def test_normal_exit_ends_leftover_grandchildren_and_keeps_exit_codes(self):
+        self.assertEqual(setup.contained(self.argv(seconds=0), self.folder, self.env), 0)
+        self.assert_tree_stopped()
+        for name in ("started", "grandchild"):
+            (self.folder / name).unlink()
+        with self.assertRaisesRegex(setup.SetupError, r"exit code 3\)"):
+            setup.command(self.argv(seconds=0, code=3), self.folder, self.env)
+
+    def test_fixed_argv_minimal_env_and_no_shell(self):
+        calls = []
+        def record(argv, **options):
+            calls.append((argv, options))
+            raise OSError("not started")
+        with patch("subprocess.Popen", record):
+            with self.assertRaisesRegex(setup.SetupError, "could not start"):
+                setup.command(["python-fixture", "-I", "-c", "pass"], self.folder, self.env)
+        argv, options = calls[0]
+        self.assertEqual(argv[-4:], ["python-fixture", "-I", "-c", "pass"])
+        if os.name == "nt":
+            self.assertEqual(argv[1:5], ["-I", "-S", "-c", setup.GATE])
+        self.assertIs(options["shell"], False)
+        self.assertIs(options["env"], self.env)
+        self.assertEqual((options["stdout"], options["stderr"]), (subprocess.DEVNULL, subprocess.DEVNULL))
+
+    @unittest.skipUnless(os.name == "nt", "Windows job containment")
+    def test_cancel_after_job_assignment_never_starts_the_command(self):
+        cancel = setup.threading.Event()
+        original = setup.WindowsJob.assign
+        def assign_then_cancel(job, pid):
+            original(job, pid)
+            cancel.set()
+        with patch.object(setup.WindowsJob, "assign", assign_then_cancel):
+            with self.assertRaises(setup.SetupCancelled):
+                setup.contained(self.argv(), self.folder, self.env, cancel=cancel)
+        time.sleep(0.5)
+        self.assertFalse((self.folder / "started").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows job containment")
+    def test_failed_job_assignment_fails_closed_before_the_command_runs(self):
+        with patch.object(setup.WindowsJob, "assign", side_effect=OSError("denied")):
+            with self.assertRaisesRegex(setup.SetupError, "could not start"):
+                setup.command(self.argv(), self.folder, self.env)
+        time.sleep(0.5)
+        self.assertFalse((self.folder / "started").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Only the Windows job outlives a killed parent")
+    def test_killed_parent_does_not_leave_the_tree_running(self):
+        root = str(Path(__file__).resolve().parent.parent)
+        parent = subprocess.Popen([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from jarvis import install_tools as t; "
+                                   "t.contained(sys.argv[3:], sys.argv[2], t.safe_environment())", root, str(self.folder), *self.argv()],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            self.assertTrue(self.wait_for("grandchild"))
+        finally:
+            parent.kill()
+            parent.wait(10)
+        self.assert_tree_stopped()
 
 
 if __name__ == "__main__":
