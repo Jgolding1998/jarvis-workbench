@@ -252,6 +252,13 @@ def make_handler(service, token, setup=None):
     setup = setup or SetupContext()
 
     class Handler(BaseHTTPRequestHandler):
+        def parse_request(self):
+            accepted = super().parse_request()
+            if accepted and self.request_version == "HTTP/0.9":
+                self.send_error(400)
+                return False
+            return accepted
+
         def version_string(self):
             return "Jarvis"
 

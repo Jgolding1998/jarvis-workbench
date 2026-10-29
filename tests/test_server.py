@@ -1,5 +1,6 @@
 import http.client
 import json
+import socket
 import threading
 import unittest
 from unittest.mock import patch
@@ -9,6 +10,20 @@ from jarvis.server import LocalHTTPServer, Service, make_handler
 
 
 class ServerTests(unittest.TestCase):
+    def test_versionless_requests_have_controlled_json_errors(self):
+        marker = "-".join(("fixture", "request", "only")).encode("ascii")
+        for target in (b"/", b"/?value=" + marker):
+            with socket.create_connection(self.server.server_address, timeout=3) as connection:
+                connection.sendall(b"GET " + target + b"\r\n\r\n")
+                response = http.client.HTTPResponse(connection)
+                response.begin()
+                body = response.read()
+                self.assertEqual(response.status, 400)
+                self.assertEqual(json.loads(body), {"error": "Invalid request"})
+                self.assertNotIn(marker, body)
+                self.assertIn("frame-ancestors 'none'", response.getheader("Content-Security-Policy"))
+        self.assertEqual(self.request("/api/status")[0], 200)
+
     @classmethod
     def setUpClass(cls):
         cls.service = Service()
