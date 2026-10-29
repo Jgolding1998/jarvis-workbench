@@ -6,8 +6,16 @@ import threading
 import time
 
 
+FAILED_READS_BEFORE_FAULT = 12
+
+
+def _presence_session(service):
+    return service.presence_session()
+
+
 def run_camera(service, stop: threading.Event, device=0):
-    camera = lease = None
+    camera = lease = faulted_session = None
+    failures = 0
     try:
         import cv2
         detector = cv2.HOGDescriptor()
@@ -18,6 +26,11 @@ def run_camera(service, stop: threading.Event, device=0):
                 camera = None
                 service.presence_camera_closed(lease)
                 lease = None
+            if faulted_session is not None:
+                if _presence_session(service) == faulted_session:
+                    stop.wait(0.1)
+                    continue
+                faulted_session = None
             if camera is None:
                 lease = service.acquire_presence_camera()
                 if lease is None:
@@ -36,13 +49,22 @@ def run_camera(service, stop: threading.Event, device=0):
                     service.camera_fault()
                     stop.wait(0.5)
                     continue
+                failures = 0
             if not service.is_active():
                 continue
             ok, frame = camera.read()
             if not ok:
-                service.camera_fault()
-                stop.wait(0.2)
+                failures += 1
+                if failures >= FAILED_READS_BEFORE_FAULT:
+                    faulted_session = _presence_session(service)
+                    camera.release()
+                    camera = None
+                    service.presence_camera_closed(lease)
+                    lease = None
+                    service.camera_fault()
+                stop.wait(0.15)
                 continue
+            failures = 0
             height, width = frame.shape[:2]
             frame = cv2.resize(frame, (640, max(128, int(height * 640 / width))))
             boxes, _ = detector.detectMultiScale(frame, winStride=(8, 8), padding=(8, 8), scale=1.05)

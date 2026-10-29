@@ -47,6 +47,7 @@ class Service:
         self.action_error = None
         self.started = clock()
         self._presence_lease = self._hand_lease = None
+        self._presence_generation = 0
         if hand_runtime is not None:
             hand_runtime.bind(self.camera, self._hand_closed)
 
@@ -87,6 +88,8 @@ class Service:
                 if not was_active and self.camera.release("presence", self._presence_lease):
                     self._presence_lease = None
                 raise
+            if not was_active and self.presence.active:
+                self._presence_generation += 1
             if not self.presence.active and self.camera.release("presence", self._presence_lease):
                 self._presence_lease = None
             if text == "stop":
@@ -213,6 +216,10 @@ class Service:
     def is_active(self):
         with self.lock:
             return self.presence.active and self.camera.owner == "presence"
+
+    def presence_session(self):
+        with self.lock:
+            return self._presence_generation if self.presence.active else None
 
     def shutdown(self):
         self.command("stop")
