@@ -16,8 +16,12 @@ class SetupHTTPTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.exits = []
+        self.exit_requested = threading.Event()
+        def on_exit():
+            self.exits.append(True)
+            self.exit_requested.set()
         self.service = Service(clock=lambda: 0)
-        context = SetupContext(root=self.root, on_exit=lambda: self.exits.append(True))
+        context = SetupContext(root=self.root, on_exit=on_exit)
         self.server = LocalHTTPServer(("127.0.0.1", 0), make_handler(self.service, TOKEN, context))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -157,6 +161,7 @@ class SetupHTTPTests(unittest.TestCase):
         status, _, body = self.post("/api/setup/exit", {})
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["stopped"])
+        self.assertTrue(self.exit_requested.wait(3), "Authorized exit callback did not complete")
         self.assertEqual(self.exits, [True])
 
     def test_hand_practice_over_http_keeps_presence_guard(self):
