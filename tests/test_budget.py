@@ -10,7 +10,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from jarvis import budget
 
@@ -141,6 +141,45 @@ class BudgetTests(unittest.TestCase):
         with patch.object(Path,"open",temporarily_shared):
             self.assertEqual(self.ledger._header(self.path,windows=True)[:16],b"SQLite format 3\0")
         self.assertEqual(len(attempts),2)
+
+    def test_busy_begin_reopens_before_retry_without_replaying_a_write(self):
+        error = sqlite3.OperationalError("synthetic busy")
+        error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        first, second = MagicMock(), MagicMock()
+        first.execute.side_effect = error
+        with patch.object(self.ledger,"_connection",side_effect=[first,second]) as connect, patch("jarvis.budget.time.sleep"):
+            self.assertIs(self.ledger._write_transaction(self.path),second)
+        first.close.assert_called_once_with()
+        second.close.assert_not_called()
+        self.assertEqual(connect.call_count,2)
+        first.execute.assert_called_once_with("BEGIN IMMEDIATE")
+        self.assertEqual([call.args[0] for call in second.execute.call_args_list],
+                         ["BEGIN IMMEDIATE","PRAGMA busy_timeout=5000"])
+
+    def test_busy_begin_has_a_total_retry_deadline(self):
+        error = sqlite3.OperationalError("synthetic busy")
+        error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        db = MagicMock()
+        db.execute.side_effect = error
+        with patch.object(self.ledger,"_connection",return_value=db) as connect, \
+                patch("jarvis.budget.time.monotonic",side_effect=[0,0.1,5.1]), patch("jarvis.budget.time.sleep") as pause:
+            with self.assertRaises(sqlite3.OperationalError):
+                self.ledger._write_transaction(self.path)
+        self.assertEqual(connect.call_count,2)
+        self.assertEqual(db.close.call_count,2)
+        pause.assert_called_once_with(0.01)
+
+    def test_non_busy_begin_errors_are_closed_and_never_retried(self):
+        error = sqlite3.OperationalError("synthetic readonly")
+        error.sqlite_errorcode = sqlite3.SQLITE_READONLY
+        db = MagicMock()
+        db.execute.side_effect = error
+        with patch.object(self.ledger,"_connection",return_value=db) as connect, patch("jarvis.budget.time.sleep") as pause:
+            with self.assertRaises(sqlite3.OperationalError):
+                self.ledger._write_transaction(self.path)
+        connect.assert_called_once()
+        db.close.assert_called_once_with()
+        pause.assert_not_called()
 
     def test_reservations_persist_and_free_calls_do_not_consume_them(self):
         self.assertEqual(self.ledger.reserve("openai",1)["reserved_usd"],0.01)

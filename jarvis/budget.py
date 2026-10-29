@@ -164,9 +164,9 @@ class BudgetLedger:
                 temporary.unlink(missing_ok=True)
 
     @staticmethod
-    def _connection(path, *, write):
+    def _connection(path, *, write, timeout=5):
         mode = "rw" if write else "ro"
-        db = sqlite3.connect(path.as_uri() + "?mode=" + mode, uri=True, timeout=5, isolation_level=None)
+        db = sqlite3.connect(path.as_uri() + "?mode=" + mode, uri=True, timeout=timeout, isolation_level=None)
         try:
             db.execute("PRAGMA trusted_schema=OFF")
             if db.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
@@ -176,6 +176,26 @@ class BudgetLedger:
         except Exception:
             db.close()
             raise
+
+    def _write_transaction(self, path):
+        deadline = time.monotonic() + 5
+        while True:
+            db = None
+            try:
+                db = self._connection(path, write=True, timeout=0.1)
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("PRAGMA busy_timeout=5000")
+                return db
+            except sqlite3.OperationalError as error:
+                if db is not None:
+                    db.close()
+                if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
+            except BaseException:
+                if db is not None:
+                    db.close()
+                raise
 
     @staticmethod
     def _rows(db, *, initialize=False):
@@ -241,8 +261,7 @@ class BudgetLedger:
             if not path.exists():
                 self._initialize(path)
             self._path()
-            with closing(self._connection(path, write=True)) as db:
-                db.execute("BEGIN IMMEDIATE")
+            with closing(self._write_transaction(path)) as db:
                 self._path(check_header=False)
                 rows = self._rows(db)
                 reserved, count = rows.get(month, (0, 0))

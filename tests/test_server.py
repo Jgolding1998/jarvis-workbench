@@ -4,7 +4,7 @@ import socket
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from jarvis.actions import Actions
 from jarvis.server import LocalHTTPServer, Service, SetupContext, make_handler
@@ -255,16 +255,19 @@ class ProtocolLimitTests(unittest.TestCase):
             server, host = self.start()
         idle = [socket.create_connection(server.server_address, timeout=3) for _ in range(2)]
         time.sleep(0.2)
-        with socket.create_connection(server.server_address, timeout=3) as extra:
-            extra.sendall(b"GET /api/status HTTP/1.1\r\nHost: " + host + b"\r\n\r\n")
-            response = http.client.HTTPResponse(extra)
-            response.begin()
-            self.assertEqual(response.status, 503)
-            self.assertEqual(json.loads(response.read()), {"error": "Server busy"})
-            self.assertEqual(response.getheader("Cache-Control"), "no-store")
-            self.assertIn("frame-ancestors 'none'", response.getheader("Content-Security-Policy"))
-        for connection in idle:
-            connection.close()
+        try:
+            for _ in range(8):
+                with socket.create_connection(server.server_address, timeout=3) as extra:
+                    extra.sendall(b"GET /api/status HTTP/1.1\r\nHost: " + host + b"\r\n\r\n")
+                    response = http.client.HTTPResponse(extra)
+                    response.begin()
+                    self.assertEqual(response.status, 503)
+                    self.assertEqual(json.loads(response.read()), {"error": "Server busy"})
+                    self.assertEqual(response.getheader("Cache-Control"), "no-store")
+                    self.assertIn("frame-ancestors 'none'", response.getheader("Content-Security-Policy"))
+        finally:
+            for connection in idle:
+                connection.close()
         deadline = time.monotonic() + 5
         while True:
             connection = http.client.HTTPConnection(host.decode(), timeout=3)
@@ -275,3 +278,14 @@ class ProtocolLimitTests(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertEqual(status, 200)
+
+    def test_busy_reply_drains_only_a_bounded_amount_after_half_close(self):
+        with patch("jarvis.server.MAX_CONNECTIONS", 0):
+            server, _ = self.start()
+        request = MagicMock()
+        request.recv.return_value = b"x" * 4096
+        server.process_request(request, ("127.0.0.1", 10000))
+        self.assertEqual(request.recv.call_count,4)
+        request.shutdown.assert_any_call(socket.SHUT_WR)
+        request.settimeout.assert_called_once_with(0.05)
+        request.close.assert_called_once_with()
