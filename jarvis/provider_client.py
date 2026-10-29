@@ -173,7 +173,10 @@ class _Reply:
         if left <= 0 or self._connection.cancelled.is_set():
             raise TimeoutError()
         self._connection.live_socket.settimeout(left)
-        return self._response.read1(amount)
+        chunk = self._response.read1(amount)
+        if self._connection.cancelled.is_set() or time.monotonic() >= self._connection.deadline:
+            raise TimeoutError()
+        return chunk
 
     def close(self):
         self._timer.cancel()
@@ -205,6 +208,9 @@ class _DirectOpener:
         try:
             connection.request("POST", parts.path, body=request.data, headers=dict(request.header_items()))
             response = connection.getresponse()
+            if expired.is_set() or time.monotonic() >= deadline:
+                response.close()
+                raise TimeoutError()
             return _Reply(response, connection, timer, request.full_url)
         except BaseException:
             timer.cancel()
@@ -346,6 +352,8 @@ def respond(provider, prompt, key=None, opener=None):
     deadline = time.monotonic() + REQUEST_TIMEOUT
     try:
         response = (opener or _DirectOpener()).open(request, timeout=REQUEST_TIMEOUT)
+        if time.monotonic() >= deadline:
+            raise ProviderError("timeout")
         if response.status != 200:
             raise ProviderError(_status_error(response.status))
         if response.geturl() != _ENDPOINTS[provider]:

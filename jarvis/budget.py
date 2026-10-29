@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from datetime import date, datetime, timezone
+from functools import wraps
 import math
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import re
 import sqlite3
 import stat
 import tempfile
+import threading
 import time
 
 from . import install_tools
@@ -24,6 +26,16 @@ MAX_DB_BYTES = 1024 * 1024
 MAX_MONTHS = 1200
 _CREATE = "CREATE TABLE allowance (month TEXT PRIMARY KEY NOT NULL, reserved_micro_usd INTEGER NOT NULL CHECK(reserved_micro_usd >= 0), paid_requests INTEGER NOT NULL CHECK(paid_requests >= 0)) WITHOUT ROWID"
 _ERROR = "The local paid allowance cannot approve this request. Check the limit and pricing date. Preserve existing allowance history when repairing local data."
+# Closing a raw file descriptor can drop SQLite's POSIX locks in another thread.
+_PROCESS_LOCK = threading.RLock()
+
+
+def _serialized(method):
+    @wraps(method)
+    def call(*args, **kwargs):
+        with _PROCESS_LOCK:
+            return method(*args, **kwargs)
+    return call
 
 
 class BudgetError(ValueError):
@@ -52,7 +64,7 @@ class BudgetLedger:
             raise BudgetError()
         return limit_usd * 1_000_000
 
-    def _path(self, *, create=False):
+    def _path(self, *, create=False, check_header=True):
         directory = install_tools.local_path(self.root, "runtime")
         if create:
             directory.mkdir(exist_ok=True)
@@ -80,7 +92,7 @@ class BudgetLedger:
             if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                     or info.st_size > MAX_DB_BYTES or suffix in {"-wal", "-shm"}):
                 raise BudgetError()
-            if not suffix:
+            if not suffix and check_header:
                 with candidate.open("rb") as stream:
                     header = stream.read(20)
                 if header[:16] != b"SQLite format 3\0" or header[18:20] != b"\x01\x01":
@@ -173,6 +185,7 @@ class BudgetLedger:
                 "kind": "local_allowance", "provider_limit_required": True,
                 "pricing_checked": PRICING_CHECKED, "valid_until": VALID_UNTIL}
 
+    @_serialized
     def snapshot(self, limit_usd):
         try:
             self._limit(limit_usd)
@@ -185,11 +198,12 @@ class BudgetLedger:
                 db.execute("BEGIN")
                 rows = self._rows(db)
                 reserved, count = rows.get(month, (0, 0))
-                self._path()
+                self._path(check_header=False)
                 return self._snapshot(month, limit_usd, reserved, count)
         except Exception:
             raise BudgetError() from None
 
+    @_serialized
     def reserve(self, provider, limit_usd):
         try:
             limit = self._limit(limit_usd)
@@ -207,16 +221,16 @@ class BudgetLedger:
             self._path()
             with closing(self._connection(path, write=True)) as db:
                 db.execute("BEGIN IMMEDIATE")
-                self._path()
+                self._path(check_header=False)
                 rows = self._rows(db)
                 reserved, count = rows.get(month, (0, 0))
                 if reserved + RESERVE_MICRO_USD > limit:
                     raise BudgetError()
                 db.execute("INSERT INTO allowance(month,reserved_micro_usd,paid_requests) VALUES(?,?,?) ON CONFLICT(month) DO UPDATE SET reserved_micro_usd=excluded.reserved_micro_usd,paid_requests=excluded.paid_requests",
                            (month, reserved + RESERVE_MICRO_USD, count + 1))
-                self._path()
+                self._path(check_header=False)
                 db.execute("COMMIT")
-                self._path()
+                self._path(check_header=False)
                 return self._snapshot(month, limit_usd, reserved + RESERVE_MICRO_USD, count + 1)
         except Exception:
             raise BudgetError() from None

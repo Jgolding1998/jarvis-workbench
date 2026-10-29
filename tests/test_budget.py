@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -44,6 +45,16 @@ def first_process_reservations(root, barrier, queue):
 def crash_before_publication(root):
     with patch.object(budget.BudgetLedger,"_publish",side_effect=lambda *args:os._exit(7)):
         budget.BudgetLedger(root,now=NOW).reserve("openai",1)
+
+
+def try_other_process_transaction(path, queue):
+    try:
+        with closing(sqlite3.connect(Path(path).as_uri()+"?mode=rw",uri=True,timeout=0.2,isolation_level=None)) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("ROLLBACK")
+        queue.put(0)
+    except sqlite3.Error as error:
+        queue.put(getattr(error,"sqlite_errorcode",-1))
 
 
 class BudgetTests(unittest.TestCase):
@@ -157,6 +168,60 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual((state["paid_requests"],state["reserved_usd"],state["remaining_usd"]),(100,1.0,0.0))
         with self.assertRaises(budget.BudgetError):
             self.ledger.reserve("openai",1)
+
+    def test_path_validation_keeps_the_transaction_locked_against_another_process(self):
+        self.ledger.reserve("openai",1)
+        context = multiprocessing.get_context("spawn")
+        queue = context.Queue()
+        original = self.ledger._rows
+        def while_transaction_active(db,**kwargs):
+            worker = context.Process(target=try_other_process_transaction,args=(str(self.path),queue))
+            try:
+                worker.start()
+                worker.join(timeout=10)
+                self.assertEqual(worker.exitcode,0)
+                self.assertEqual(queue.get(timeout=3) & 0xFF,sqlite3.SQLITE_BUSY)
+            finally:
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=5)
+            return original(db,**kwargs)
+        try:
+            with patch.object(self.ledger,"_rows",side_effect=while_transaction_active):
+                self.assertEqual(self.ledger.reserve("openai",1)["paid_requests"],2)
+        finally:
+            queue.close()
+
+    def test_another_manager_cannot_read_headers_while_a_writer_is_connected(self):
+        self.ledger.reserve("openai",1)
+        second = budget.BudgetLedger(self.root,now=NOW)
+        writer_entered, release_writer = threading.Event(), threading.Event()
+        reader_entered, early_header = threading.Event(), threading.Event()
+        original_rows, original_open = self.ledger._rows, Path.open
+        def pause_writer(db,**kwargs):
+            writer_entered.set()
+            if not release_writer.wait(timeout=5):
+                raise RuntimeError("Test writer was not released")
+            return original_rows(db,**kwargs)
+        def track_open(path,*args,**kwargs):
+            if path == self.path and writer_entered.is_set() and not release_writer.is_set():
+                early_header.set()
+            return original_open(path,*args,**kwargs)
+        def read_second():
+            reader_entered.set()
+            return second.snapshot(1)
+        with patch.object(self.ledger,"_rows",side_effect=pause_writer), patch.object(Path,"open",track_open), ThreadPoolExecutor(max_workers=2) as pool:
+            writer = pool.submit(self.ledger.reserve,"openai",1)
+            try:
+                self.assertTrue(writer_entered.wait(timeout=3))
+                reader = pool.submit(read_second)
+                self.assertTrue(reader_entered.wait(timeout=3))
+                self.assertFalse(early_header.wait(timeout=0.15))
+                self.assertFalse(reader.done())
+            finally:
+                release_writer.set()
+            self.assertEqual(writer.result(timeout=5)["paid_requests"],2)
+            self.assertEqual(reader.result(timeout=5)["paid_requests"],2)
 
     def test_process_reservations_share_the_same_allowance(self):
         self.ledger.reserve("openai",1)
