@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
+import os
 import secrets
 import socket
 import sys
@@ -244,18 +245,22 @@ class Service:
 class SetupContext:
     """Local setup wizard state: catalog, ignored runtime directory, optional exit hook."""
 
-    def __init__(self, catalog=None, runtime_dir=None, on_exit=None, root=None, onboarding=None):
+    def __init__(self, catalog=None, runtime_dir=None, on_exit=None, root=None, onboarding=None, enabled=True):
         self.catalog = catalog or planner.load_catalog()
         self.root = Path(root or planner.ROOT)
         self.runtime_dir = Path(runtime_dir or self.root / "runtime")
         self.on_exit = on_exit
         self.write_lock = threading.Lock()
-        self.onboarding = onboarding or Onboarding(self.root)
+        # Disabled in the desktop app, so it cannot save setup, reinstall, or launch another desktop app.
+        self.enabled = enabled is True
+        self.onboarding = (onboarding or Onboarding(self.root)) if self.enabled else None
 
 
 HEADER_SECONDS = 5.0
 BODY_SECONDS = 10.0
 MAX_CONNECTIONS = 16
+SETUP_ROUTES = frozenset({"/setup", "/setup.js", "/setup.css", "/setup-catalog.json", "/quickstart-catalog.json",
+                          "/provider-catalog.json", "/api/setup/config", "/api/setup/apply", "/api/quickstart"})
 _BUSY = b'{"error":"Server busy"}'
 BUSY_RESPONSE = (b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: " + str(len(_BUSY)).encode()
                  + b"\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
@@ -291,6 +296,13 @@ class SocketDeadline:
 
 class LocalHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
+    # On Windows SO_REUSEADDR lets a second socket bind the same port; claim it exclusively instead.
+    allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self):
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
     def __init__(self, *args, **kwargs):
         self.connections = threading.BoundedSemaphore(MAX_CONNECTIONS)
@@ -374,6 +386,9 @@ def make_handler(service, token, setup=None):
                 self.request_version = "HTTP/1.0"
             self._send(status, {"error": public})
 
+        def _setup_route(self):
+            return not setup.enabled and (self.path in SETUP_ROUTES or self.path.startswith("/api/quickstart/"))
+
         def _trusted(self):
             if len(self.headers.get_all("Host", [])) != 1 or len(self.headers.get_all("Origin", [])) > 1:
                 return False
@@ -399,6 +414,9 @@ def make_handler(service, token, setup=None):
             if not self._trusted():
                 self._send(403, {"error": "Untrusted host or origin"})
                 return
+            if self._setup_route():
+                self._send(404, {"error": "Setup runs in the window that started Jarvis"})
+                return
             if self.path == "/api/session":
                 self._send(200, {"token": token})
             elif self.path == "/api/status":
@@ -406,7 +424,8 @@ def make_handler(service, token, setup=None):
             elif self.path == "/api/setup/diagnostics":
                 report = planner.diagnostics(setup.root)
                 report.update({"local": True, "mode": "demo" if service.actions.demo else "camera",
-                               "hand_allowed": service.hand.allowed, "can_exit": setup.on_exit is not None})
+                               "hand_allowed": service.hand.allowed, "can_exit": setup.on_exit is not None,
+                               "setup_available": setup.enabled})
                 self._send(200, report)
             elif self.path == "/api/setup/config":
                 self._send(200, {"answers": planner.load_config(setup.runtime_dir, setup.catalog)})
@@ -422,6 +441,9 @@ def make_handler(service, token, setup=None):
             supplied = self.headers.get("X-Jarvis-Token", "")
             if not self._trusted() or len(self.headers.get_all("X-Jarvis-Token", [])) != 1 or not supplied.isascii() or not hmac.compare_digest(supplied, token):
                 self._send(403, {"error": "Local session authorization required"})
+                return
+            if self._setup_route():
+                self._send(404, {"error": "Setup runs in the window that started Jarvis"})
                 return
             try:
                 if self.headers.get("Transfer-Encoding") is not None or len(self.headers.get_all("Content-Length", [])) != 1 or len(self.headers.get_all("Content-Type", [])) != 1:
@@ -547,8 +569,24 @@ def check_args(parser, args):
         parser.error("Camera index must be 0 to 9")
 
 
-def serve(args, open_path=None, opener=None):
-    """Run the local server until interrupted or the wizard's exit route is used."""
+def watch_parent(stream, request_exit):
+    """Stop when the parent-watch pipe ends: setup closed it, or setup exited or was killed.
+
+    Reads the raw descriptor: a daemon thread blocked inside a buffered stdin read can crash interpreter shutdown."""
+    try:
+        try:
+            descriptor = stream.fileno()
+        except (OSError, ValueError, AttributeError):
+            descriptor = None
+        while os.read(descriptor, 4096) if descriptor is not None else stream.read(4096):
+            pass
+    except (OSError, ValueError):
+        pass
+    request_exit()
+
+
+def serve(args, open_path=None, opener=None, *, setup_enabled=True, parent_input=None):
+    """Run the local server until interrupted, the exit route is used, or parent_input reaches end of file."""
     hand_runtime = None
     if args.allow_hand_control:
         from .hand_worker import LiveHandWorker
@@ -560,9 +598,12 @@ def serve(args, open_path=None, opener=None):
     def request_exit():
         threading.Thread(target=holder["server"].shutdown, daemon=True).start()
 
-    server = LocalHTTPServer(("127.0.0.1", args.port), make_handler(service, secrets.token_urlsafe(32), SetupContext(
-        on_exit=request_exit, onboarding=Onboarding(planner.ROOT, read_aloud=args.voice_model is None))))
+    setup = SetupContext(on_exit=request_exit, enabled=setup_enabled,
+                         onboarding=Onboarding(planner.ROOT, read_aloud=args.voice_model is None) if setup_enabled else None)
+    server = LocalHTTPServer(("127.0.0.1", args.port), make_handler(service, secrets.token_urlsafe(32), setup))
     holder["server"] = server
+    if parent_input is not None:
+        threading.Thread(target=watch_parent, args=(parent_input, request_exit), daemon=True, name="jarvis-parent-watch").start()
     stop = threading.Event()
 
     def ticker():
@@ -591,9 +632,16 @@ def serve(args, open_path=None, opener=None):
         pass
     finally:
         stop.set()
-        service.shutdown()
-        server.server_close()
-    print("Jarvis stopped.")
+        try:
+            service.shutdown()
+        finally:
+            if setup.onboarding is not None:
+                setup.onboarding.close()
+            server.server_close()
+    try:
+        print("Jarvis stopped.")
+    except OSError:
+        pass  # Setup may already have closed this app's output pipe.
 
 
 def main(argv=None):

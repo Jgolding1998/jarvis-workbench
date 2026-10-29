@@ -6,6 +6,7 @@ import ipaddress
 import json
 import math
 import queue
+import re
 import socket
 import ssl
 import threading
@@ -26,6 +27,7 @@ DNS_TIMEOUT = 3.0
 _DNS_SLOT = threading.BoundedSemaphore(1)
 _IPV6_PUBLIC = ipaddress.ip_network("2000::/3")
 _IPV6_SPECIAL = tuple(ipaddress.ip_network(value) for value in ("2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20"))
+_JSON_TOKENS = re.compile(r'["\\{}\[\]]')
 
 PROVIDERS = MappingProxyType({
     "none": MappingProxyType({"id": "none", "name": "No AI", "model": None, "setup_url": None,
@@ -172,6 +174,8 @@ class _Reply:
         left = self._connection.deadline - time.monotonic()
         if left <= 0 or self._connection.cancelled.is_set():
             raise TimeoutError()
+        if self._response.isclosed():
+            return b""
         try:
             self._connection.live_socket.settimeout(left)
             chunk = self._response.read1(amount)
@@ -225,8 +229,7 @@ class _DirectOpener:
             raise
 
 
-def _json(body):
-    text = body.decode("utf-8")
+def _check_depth(text):
     level, quoted, escaped = 0, False, False
     for character in text:
         if quoted:
@@ -244,6 +247,36 @@ def _json(body):
                 raise ProviderError("invalid_response")
         elif character in "]}":
             level -= 1
+
+
+def _check_sparse_depth(text):
+    level, quoted, escaped_at = 0, False, -1
+    for match in _JSON_TOKENS.finditer(text):
+        character = match.group()
+        if match.start() == escaped_at:
+            continue
+        if quoted:
+            if character == "\\":
+                escaped_at = match.start() + 1
+            elif character == '"':
+                quoted = False
+        elif character == '"':
+            quoted = True
+        elif character in "[{":
+            level += 1
+            if level > 16:
+                raise ProviderError("invalid_response")
+        elif character in "]}":
+            level -= 1
+
+
+def _json(body):
+    text = body.decode("utf-8")
+    # Skip ordinary prose in C; punctuation-heavy replies keep the cheaper character loop.
+    if len(text) >= 1024 and all(text.count(char) <= len(text) // 192 for char in '\\"{}[]'):
+        _check_sparse_depth(text)
+    else:
+        _check_depth(text)
 
     def pairs(entries):
         result = {}

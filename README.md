@@ -22,6 +22,8 @@ python3 -m jarvis.launcher
 
 The launcher opens setup in safe simulation mode. Saving choices, installing dependencies, and adding an API key do not open a camera or microphone, move the cursor, or arm Windows actions. Other operating systems can use the browser simulator; the beginner desktop installation targets Windows x64.
 
+The desktop app opened from setup stops when you choose Exit Jarvis in setup, press Ctrl+C in setup's terminal, or close that terminal. Exit Jarvis on the desktop dashboard stops that app while leaving setup available. Closing a browser tab leaves the local service running; use Exit Jarvis to stop it. To change setup, use the setup window; the desktop app does not include the setup wizard.
+
 A phone can use the guide and virtual gesture practice, then save the choices for a computer. This ZIP cannot install an iPhone or Android app. The phone website cannot operate a computer's camera, mouse, or lock screen.
 
 ## Add optional tools on Windows

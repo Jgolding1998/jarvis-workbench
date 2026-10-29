@@ -2,7 +2,7 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Jarvis Workbench</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
 <body>
-  <aside><a class="brand" href="/" aria-label="Jarvis home"><span class="mark">J</span> JARVIS</a><p class="aside-label">WORKSTATION</p><a class="nav active" href="#overview">Overview <span>01</span></a><a class="nav" href="#policy">Presence policy <span>02</span></a><a class="nav" href="#hand">Hand control <span>03</span></a><a class="nav" href="/setup">Setup wizard <span>04</span></a><div class="aside-bottom"><span class="led"></span> Runs on this machine<br><small>Camera frames stay in memory.</small></div></aside>
+  <aside><a class="brand" href="/" aria-label="Jarvis home"><span class="mark">J</span> JARVIS</a><p class="aside-label">WORKSTATION</p><a class="nav active" href="#overview">Overview <span>01</span></a><a class="nav" href="#policy">Presence policy <span>02</span></a><a class="nav" href="#hand">Hand control <span>03</span></a><a id="setup-link" class="nav" href="/setup" hidden>Setup wizard <span>04</span></a><div class="aside-bottom"><span class="led"></span> Runs on this machine<br><small>Camera frames stay in memory.</small></div></aside>
   <main id="overview">
     <header><div><p class="eyebrow">LOCAL SYSTEMS / WORKBENCH</p><h1>Your desk. Under control.</h1><p class="subtitle">See who's in view. Choose what happens when you step away.</p></div><span id="mode" class="badge">CONNECTING</span></header>
     <section class="hero" aria-label="Presence state"><div class="hero-main"><div class="orb" id="orb"><span>J</span></div><div><p class="eyebrow">PRESENCE ENGINE</p><h2 id="state">Standby</h2><p id="state-note">Waiting for a local session.</p></div></div><button id="stop" class="stop">Stop and disarm</button></section>
@@ -18,6 +18,6 @@
       <label class="action-option"><input id="hand-cursor" type="checkbox"><div><b>Move the real cursor</b><p>Off by default. Windows only. Practice never moves the real cursor.</p></div></label>
       <button id="hand-arm" class="secondary" type="button">Apply hand settings</button><p class="help" id="hand-tracking"></p></div></div></section>
     <section class="panel events"><div class="section-title"><div><p class="eyebrow">04 / LOCAL ACTIVITY</p><h3>What actually happened.</h3></div><span class="mini">MEMORY ONLY / LAST 40</span></div><ol id="events"><li>No actions yet.</li></ol></section>
-    <footer><span>JARVIS WORKBENCH</span><p>Experimental presence estimates. Use Windows auto-lock as your primary protection.</p><span id="uptime">0s uptime</span></footer>
+    <footer><span>JARVIS WORKBENCH</span><p>Experimental presence estimates. Use Windows auto-lock as your primary protection.</p><span id="uptime">0s uptime</span><button id="exit" class="secondary" type="button" hidden>Exit Jarvis</button></footer>
   </main>
 </body></html>

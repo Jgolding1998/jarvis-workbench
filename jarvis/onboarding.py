@@ -10,12 +10,14 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 
 from . import install_tools, planner
 from .budget import BudgetLedger, BudgetError
 
 CLOUD = frozenset({"nvidia", "openai", "anthropic"})
+STARTUP_SECONDS = 45
+EOF_SECONDS = 5
 PROVIDERS = CLOUD | {"none", "ollama"}
 
 
@@ -43,6 +45,7 @@ class Onboarding:
         self._desktop_url = None
         self._desktop_process = None
         self._launching = False
+        self._closed = False
         self._included = False
         self._checked_feature = self._checked_ready = None
         try:
@@ -261,16 +264,49 @@ class Onboarding:
                 return {"url": self._desktop_url}
             if self._launching:
                 raise OnboardingError("The desktop app is already starting.")
+            if self._closed:
+                raise OnboardingError("Setup is closing. Start Jarvis again to open the desktop app.")
             self._launching = True
             feature = self._installed_feature
         try:
             address = self._launch(feature)
             with self._lock:
+                if self._closed:
+                    raise OnboardingError("Setup is closing. Start Jarvis again to open the desktop app.")
                 self._desktop_url = address
             return {"url": address}
         finally:
             with self._lock:
                 self._launching = False
+
+    def close(self):
+        """Stop the desktop app this setup started, if any. Safe to call more than once; later launches are refused."""
+        with self._lock:
+            self._closed = True
+            process, self._desktop_process, self._desktop_url = self._desktop_process, None, None
+        if process is not None:
+            self._stop(process)
+
+    @staticmethod
+    def _stop(process, grace=None):
+        """Ask only our own child to exit by closing its parent-watch pipe, then terminate, kill and reap it."""
+        grace = EOF_SECONDS if grace is None else grace
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except OSError:
+            pass
+        for stop, wait in ((None, grace), (process.terminate, 3), (process.kill, 3)):
+            try:
+                if stop is not None:
+                    stop()
+                process.wait(timeout=wait)
+                return
+            except subprocess.TimeoutExpired:
+                continue
+            except OSError:
+                if process.poll() is not None:
+                    return
 
     def _refresh_desktop(self):
         if self._desktop_process is not None and self._desktop_process.poll() is not None:
@@ -285,11 +321,14 @@ class Onboarding:
         if not executable.is_file():
             raise OnboardingError("The local Python environment is missing. Run installation again.")
         env = install_tools.safe_environment()
-        process = subprocess.Popen([str(executable), "-u", "-m", "jarvis.desktop", "--feature", feature],
-                                   cwd=self.root, env=env, shell=False, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         with self._lock:
+            if self._closed:
+                raise OnboardingError("Setup is closing. Start Jarvis again to open the desktop app.")
+            # The child exits when this pipe reaches end of file: on close() and also when this process dies.
+            process = subprocess.Popen([str(executable), "-u", "-m", "jarvis.desktop", "--feature", feature, "--parent-watch"],
+                                       cwd=self.root, env=env, shell=False, stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._desktop_process = process
         result = Queue(maxsize=1)
 
@@ -311,14 +350,24 @@ class Onboarding:
                 pass
             finally:
                 process.stdout.close()
+                try:
+                    result.put_nowait(None)  # No address: fail now instead of waiting for the startup limit.
+                except Full:
+                    pass
 
         threading.Thread(target=read_address, daemon=True).start()
         try:
-            return result.get(timeout=45)
+            address = result.get(timeout=STARTUP_SECONDS)
         except Empty:
-            process.terminate()
-            try:
-                process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                process.kill()
-            raise OnboardingError("The desktop app could not start. Check the selected tools and try again.") from None
+            address = None
+        with self._lock:
+            owned = self._desktop_process is process
+            if address is None or not owned or self._closed:
+                if owned:
+                    self._desktop_process = None
+                address = None
+        if address is None:
+            if owned:  # Otherwise close() already took this child and is stopping it.
+                self._stop(process, grace=0)
+            raise OnboardingError("The desktop app could not start. Check the selected tools and try again.")
+        return address

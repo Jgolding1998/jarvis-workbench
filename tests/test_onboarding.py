@@ -1,5 +1,8 @@
 import http.client
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -449,6 +452,192 @@ class OnboardingHTTPTests(unittest.TestCase):
             self.assertNotIn(b"private ledger marker", body)
         finally:
             path.unlink()
+
+
+STUB_DESKTOP = """import pathlib, sys, time
+mode = sys.argv[sys.argv.index("--feature") + 1]
+marker = pathlib.Path("stub-" + mode + ".txt")
+if "--parent-watch" not in sys.argv:
+    sys.exit(3)
+if mode == "fail":
+    print("The selected desktop tools are incomplete. Run setup again.", flush=True)
+    sys.exit(2)
+if mode == "slow":
+    time.sleep(1.5)
+print("Jarvis: http://127.0.0.1:43210", flush=True)
+if mode == "stubborn":
+    time.sleep(60)
+while sys.stdin.buffer.read(4096):
+    pass
+marker.write_text("parent pipe closed")
+"""
+
+PARENT = """import sys
+sys.path.insert(0, sys.argv[1])
+from unittest.mock import patch
+from jarvis import bundle, onboarding
+with patch.object(bundle, "is_bundled", return_value=True):
+    manager = onboarding.Onboarding(sys.argv[2], vault=object(), budget=object())
+    manager._launch_desktop("camera")
+print(manager._desktop_process.pid, flush=True)
+import os, signal
+os.kill(os.getpid(), signal.SIGTERM)  # Windows: TerminateProcess, no cleanup runs
+"""
+
+
+@unittest.skipUnless(sys.platform == "win32", "The desktop app is launched only on Windows")
+class DesktopLifecycleTests(unittest.TestCase):
+    """Real child processes, but only an owned stub desktop app: no devices, network or credentials."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="jarvis lifecycle ")
+        self.root = Path(self.temp.name)
+        (self.root / "jarvis").mkdir()
+        (self.root / "jarvis" / "__init__.py").write_text("")
+        (self.root / "jarvis" / "desktop.py").write_text(STUB_DESKTOP)
+        self.bundled = patch("jarvis.bundle.is_bundled", return_value=True)
+        self.bundled.start()
+        self.manager = Onboarding(self.root, vault=object(), budget=object())
+        self.children = []
+        popen = subprocess.Popen
+
+        def track(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            self.children.append(child)
+            return child
+        self.popen = patch("jarvis.onboarding.subprocess.Popen", side_effect=track)
+        self.popen.start()
+
+    def tearDown(self):
+        self.popen.stop()
+        self.bundled.stop()
+        leftovers = [child for child in self.children if child.poll() is None]
+        for child in leftovers:
+            child.kill()
+            child.wait(5)
+        self.temp.cleanup()
+        self.assertEqual(leftovers, [], "A desktop child outlived its test")
+
+    def test_close_ends_the_child_through_its_parent_pipe_and_is_idempotent(self):
+        self.assertEqual(self.manager._launch_desktop("camera"), "http://127.0.0.1:43210/")
+        child = self.children[0]
+        self.assertIsNone(child.poll())
+        self.assertIn("--parent-watch", child.args)
+        self.manager.close()
+        self.assertEqual(child.returncode, 0)
+        self.assertEqual((self.root / "stub-camera.txt").read_text(), "parent pipe closed")
+        self.manager.close()
+        self.assertIsNone(self.manager._desktop_process)
+        with self.assertRaisesRegex(OnboardingError, "closing"):
+            self.manager._launch_desktop("camera")
+        self.assertEqual(len(self.children), 1)
+
+    def test_close_without_a_child_does_nothing(self):
+        self.manager.close()
+        self.manager.close()
+        self.assertEqual(self.children, [])
+
+    def test_child_that_exits_without_an_address_fails_promptly_and_can_be_retried(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(OnboardingError, "could not start"):
+            self.manager._launch_desktop("fail")
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertEqual(self.children[0].poll(), 2)
+        self.assertIsNone(self.manager._desktop_process)
+        self.assertEqual(self.manager._launch_desktop("camera"), "http://127.0.0.1:43210/")
+        self.manager.close()
+        self.assertEqual(self.children[1].returncode, 0)
+
+    def test_child_that_ignores_its_parent_pipe_is_terminated(self):
+        self.manager._launch_desktop("stubborn")
+        child = self.children[0]
+        with patch("jarvis.onboarding.EOF_SECONDS", 0.3):
+            started = time.monotonic()
+            self.manager.close()
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertIsNotNone(child.poll())
+        self.assertNotEqual(child.returncode, 0)
+        self.assertFalse((self.root / "stub-stubborn.txt").exists())
+
+    def test_startup_limit_stops_a_silent_child(self):
+        with patch("jarvis.onboarding.STARTUP_SECONDS", 0.5), self.assertRaisesRegex(OnboardingError, "could not start"):
+            self.manager._launch_desktop("slow")
+        self.assertIsNotNone(self.children[0].poll())
+        self.assertIsNone(self.manager._desktop_process)
+
+    def test_close_during_startup_rejects_the_late_address(self):
+        self.manager._install_state, self.manager._installed_feature = "ready", "slow"
+        failures = []
+
+        def launch():
+            try:
+                self.manager.launch(True)
+            except OnboardingError as error:
+                failures.append(str(error))
+        thread = threading.Thread(target=launch)
+        thread.start()
+        end = time.monotonic() + 5
+        while not self.children and time.monotonic() < end:
+            time.sleep(.01)
+        self.assertEqual(len(self.children), 1)
+        self.manager.close()
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(failures), 1)
+        self.assertIsNone(self.manager._desktop_url)
+        self.assertIsNotNone(self.children[0].poll())
+        with self.assertRaisesRegex(OnboardingError, "closing"):
+            self.manager.launch(True)
+
+    def test_forced_parent_death_stops_the_child(self):
+        import ctypes
+        repo = str(Path(__file__).resolve().parents[1])
+        env = {key: value for key, value in os.environ.items() if key.upper() in {"SYSTEMROOT", "WINDIR"}}
+        parent = subprocess.run([sys.executable, "-I", "-c", PARENT, repo, str(self.root)], capture_output=True,
+                                text=True, timeout=60, env=env)
+        self.assertEqual(parent.returncode, 15, parent.stderr[-500:])
+        pid = int(parent.stdout.split()[0])
+        marker = self.root / "stub-camera.txt"
+        end = time.monotonic() + 10
+        while not marker.exists() and time.monotonic() < end:
+            time.sleep(.05)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        end = time.monotonic() + 5
+        while time.monotonic() < end:
+            handle = kernel.OpenProcess(0x1000, False, pid)
+            if not handle:
+                break
+            code = ctypes.c_ulong()
+            kernel.GetExitCodeProcess(handle, ctypes.byref(code))
+            kernel.CloseHandle(handle)
+            if code.value != 259:
+                break
+            time.sleep(.05)
+        else:
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+            self.fail("The desktop child outlived its forcibly stopped parent")
+        self.assertEqual(marker.read_text(), "parent pipe closed")
+
+
+class CloseFallbackTests(unittest.TestCase):
+    """close() only acts on the child this Onboarding started, through its Popen handle."""
+
+    def test_stop_escalates_on_the_owned_handle_only(self):
+        from unittest.mock import Mock
+        process = Mock()
+        process.wait.side_effect = [subprocess.TimeoutExpired("x", 1), subprocess.TimeoutExpired("x", 3), 1]
+        with tempfile.TemporaryDirectory() as folder:
+            manager = Onboarding(folder, vault=object(), budget=object())
+            manager._desktop_process = process
+            with patch("jarvis.onboarding.subprocess.Popen", side_effect=AssertionError("No process allowed")), \
+                    patch("os.kill", side_effect=AssertionError("No PID kill")):
+                manager.close()
+                manager.close()
+        process.stdin.close.assert_called_once_with()
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_count, 3)
+
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--feature", choices=("camera", "hand"), required=True)
     parser.add_argument("--check", action="store_true")
+    # Private: set by setup. Standard input is a pipe from setup; end of file means setup closed or died, so stop.
+    parser.add_argument("--parent-watch", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if sys.platform != "win32":
         print("Desktop control requires Windows.")
@@ -30,11 +32,18 @@ def main(argv=None):
     if args.check:
         print("Desktop prerequisites are ready. No devices were opened.")
         return 0
+    parent_input = None
+    if args.parent_watch:
+        parent_input = getattr(sys.stdin, "buffer", None)
+        if parent_input is None:
+            print("The setup window that started Jarvis is unavailable. Start Jarvis again.")
+            return 2
     from . import server
     flags = ["--port", "0"] + (["--camera", "--allow-lock", "--allow-spreadsheet"] if args.feature == "camera" else ["--allow-hand-control"])
     options = server.build_parser().parse_args(flags)
     server.check_args(parser, options)
-    server.serve(options)
+    # The desktop app never runs the setup wizard itself: setup and its install or launch steps stay in the setup window.
+    server.serve(options, setup_enabled=False, parent_input=parent_input)
     return 0
 
 

@@ -54,6 +54,20 @@ class FakeReply:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_depth_limit_counts_structure_outside_escaped_strings(self):
+        for text in ('plain ' * 2000, '\\"{}[]', '\\\\"[]{}', '\\\\\\"{}[]',
+                     '\\x{}[]', '\n\t\r{}[]', 'snow \u2603 { [ ] }', '\\' * 3000):
+            nested = 1
+            for _ in range(15):
+                nested = [nested]
+            value = {"text": text, "nested": nested}
+            with self.subTest(text=text[:20]):
+                self.assertEqual(client._json(json.dumps(value).encode()), value)
+                value["nested"] = [nested]
+                with self.assertRaises(client.ProviderError) as error:
+                    client._json(json.dumps(value).encode())
+                self.assertEqual(error.exception.code, "invalid_response")
+
     def call(self, provider="openai", value=None, **reply_options):
         reply = FakeReply(provider, value, **reply_options)
         opener = Mock()
@@ -235,6 +249,7 @@ class ProviderTests(unittest.TestCase):
         environment = {"HTTP_PROXY": "http://attacker.invalid", "HTTPS_PROXY": "http://attacker.invalid", "ALL_PROXY": "http://attacker.invalid",
                        "OPENAI_BASE_URL": "https://attacker.invalid", "OPENAI_MODEL": "wrong", "OPENAI_API_KEY": "unused-environment-value"}
         reply = Mock(status=200, headers={"Content-Type": "application/json"})
+        reply.isclosed.return_value = False
         reply.read1.side_effect = [json.dumps(model_reply("openai")).encode(), b""]
         connection = Mock(live_socket=Mock(), cancelled=threading.Event())
         connection.deadline = time.monotonic() + 45
@@ -245,6 +260,74 @@ class ProviderTests(unittest.TestCase):
         resolve.assert_called_once()
         self.assertEqual(connection.request.call_args.args[:2], ("POST", "/v1/responses"))
         self.assertEqual(json.loads(connection.request.call_args.kwargs["body"])["model"], "gpt-6-luna")
+
+    def socket_reply(self, provider, framing, *, truncate=False):
+        body = json.dumps(model_reply(provider)).encode()
+        if framing == "chunked":
+            headers = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+            payload = ("%x\r\n" % len(body)).encode() + body + b"\r\n0\r\n\r\n"
+        else:
+            protocol = b"HTTP/1.0" if framing == "http10" else b"HTTP/1.1"
+            headers = protocol + b" 200 OK\r\n"
+            if framing != "eof":
+                headers += b"Content-Length: " + str(len(body) + int(truncate)).encode() + b"\r\n"
+            payload = body
+        response = headers + b"Content-Type: application/json\r\nConnection: close\r\n\r\n" + payload
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(2)
+        address = listener.getsockname()
+        errors = []
+
+        def serve():
+            try:
+                with listener.accept()[0] as connection:
+                    connection.settimeout(2)
+                    data = b""
+                    while b"\r\n\r\n" not in data:
+                        part = connection.recv(8192)
+                        if not part or len(data) > 32768:
+                            raise ValueError("Fixture request incomplete")
+                        data += part
+                    request_headers, _, request_body = data.partition(b"\r\n\r\n")
+                    length = int(next(line.split(b":", 1)[1] for line in request_headers.split(b"\r\n")
+                                      if line.lower().startswith(b"content-length:")))
+                    while len(request_body) < length:
+                        part = connection.recv(length - len(request_body))
+                        if not part:
+                            raise ValueError("Fixture body incomplete")
+                        request_body += part
+                    connection.sendall(response)
+            except Exception as error:
+                errors.append(type(error).__name__)
+            finally:
+                listener.close()
+
+        worker = threading.Thread(target=serve, daemon=True)
+        worker.start()
+        context = Mock()
+        context.wrap_socket.side_effect = lambda raw, server_hostname: raw
+        try:
+            with patch.object(client, "REQUEST_TIMEOUT", 2), patch.object(client, "_resolve", return_value=(socket.AF_INET, address)), patch.object(client.ssl, "create_default_context", return_value=context):
+                return client.respond(provider, "Synthetic completion check", KEY)
+        finally:
+            worker.join(timeout=3)
+            listener.close()
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+
+    def test_complete_socket_replies_survive_connection_close_for_each_provider(self):
+        for provider in ("openai", "anthropic", "nvidia"):
+            for framing in ("length", "http10", "chunked", "eof"):
+                with self.subTest(provider=provider, framing=framing):
+                    self.assertEqual(self.socket_reply(provider, framing), "A plain text reply.")
+
+    def test_truncated_socket_reply_is_still_rejected_after_transport_closes(self):
+        for provider in ("openai", "anthropic", "nvidia"):
+            with self.subTest(provider=provider), self.assertRaises(client.ProviderError) as error:
+                self.socket_reply(provider, "length", truncate=True)
+            self.assertEqual(error.exception.code, "invalid_response")
 
     def test_stalled_dns_uses_one_bounded_slot_and_recovers(self):
         finish = threading.Event()

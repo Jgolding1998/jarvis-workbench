@@ -1,14 +1,16 @@
 "use strict";
 let token = "";
+let exiting = false;
 const $ = (id) => document.getElementById(id);
 async function send(path, data) {
+  if (exiting) return;
   const response = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Jarvis-Token": token}, body: JSON.stringify(data)});
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || "Request failed");
   $("error").hidden = true;
-  render(result);
+  if (!exiting) render(result);
 }
-function showError(error) { $("error").textContent = error.message; $("error").hidden = false; }
+function showError(error) { if (exiting) return; $("error").textContent = error.message; $("error").hidden = false; }
 function render(state) {
   $("mode").textContent = state.hand && state.hand.allowed ? (state.hand.mode === "watching" ? "LOCAL HAND CAMERA" : "LOCAL HARDWARE READY") : state.demo ? "SAFE DEMO" : "LOCAL CAMERA";
   $("state").textContent = state.active ? (state.action_error ? "Action failed" : state.camera === "fault" ? "Camera unavailable" : "Guard active") : "Standby";
@@ -80,6 +82,32 @@ document.querySelectorAll("[data-gesture]").forEach((button) => button.addEventL
 }));
 $("hand-stop").addEventListener("click", () => send("/api/command", {command: "stop mouse"}).catch(showError));
 $("hand-arm").addEventListener("click", () => send("/api/hand/arm", {voice: $("hand-voice").checked, move_cursor: $("hand-cursor").checked}).catch(showError));
-async function refresh() { try { const response = await fetch("/api/status"); if (!response.ok) throw new Error("Session unavailable"); render(await response.json()); } catch (error) { showError(error); } }
-fetch("/api/session").then((response) => response.json()).then((session) => { token = session.token; return refresh(); }).catch(showError);
-setInterval(refresh, 500);
+$("exit").addEventListener("click", async () => {
+  $("exit").disabled = true;
+  try {
+    const response = await fetch("/api/setup/exit", {method: "POST", headers: {"Content-Type": "application/json", "X-Jarvis-Token": token}, body: "{}"});
+    if (!response.ok || (await response.json()).stopped !== true) throw new Error("Could not exit Jarvis. Try again.");
+    exiting = true;
+    clearInterval(pollTimer);
+    $("state").textContent = "Jarvis stopped";
+    $("state-note").textContent = "This local app has closed. You can close this tab.";
+    $("orb").classList.remove("running");
+    $("pad").classList.remove("live");
+    $("virtual-cursor").hidden = true;
+    $("hand-label").textContent = "OFF";
+    $("armed-label").textContent = "DISARMED";
+    $("error").hidden = true;
+    document.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
+  } catch (error) { $("exit").disabled = false; showError(new Error("Could not exit Jarvis. Try again.")); }
+});
+async function refresh() { if (exiting) return; try { const response = await fetch("/api/status"); if (!response.ok) throw new Error("Session unavailable"); const state = await response.json(); if (!exiting) render(state); } catch (error) { if (!exiting) showError(error); } }
+fetch("/api/session").then((response) => response.json()).then(async (session) => {
+  token = session.token;
+  await refresh();
+  const response = await fetch("/api/setup/diagnostics");
+  if (!response.ok) return;
+  const report = await response.json();
+  $("setup-link").hidden = report.setup_available !== true;
+  $("exit").hidden = report.can_exit !== true;
+}).catch(showError);
+const pollTimer = setInterval(refresh, 500);

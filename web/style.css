@@ -643,4 +643,5 @@ html {
 .orb span { color:transparent; }
 .orb.running { border-color:#a5f8ff; box-shadow:0 0 0 7px #01070a,0 0 0 9px #25e7ff,0 0 0 16px #01070a,0 0 0 17px #ffb84daa,0 0 34px #25e7ff88; }
 body { background:radial-gradient(ellipse 60% 40% at 90% -10%,#06415055 0,transparent 70%),#01070a; }
+[hidden] { display:none !important; }
 @media (forced-colors:active) { .hero::before, .hero::after, .panel::before, .panel::after { display:none; } }

@@ -1,9 +1,13 @@
 import http.client
+import io
 import json
+import os
 import socket
+import sys
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from jarvis.actions import Actions
@@ -317,3 +321,186 @@ class ProtocolLimitTests(unittest.TestCase):
         request.shutdown.assert_any_call(socket.SHUT_WR)
         request.settimeout.assert_called_once_with(0.05)
         request.close.assert_called_once_with()
+
+
+class DesktopServeTests(unittest.TestCase):
+    """The desktop app's server: no setup wizard, parent-watch shutdown, and an exclusive port."""
+
+    def run_serve(self, parent_input=None, **options):
+        from jarvis import server
+        stopped, created = threading.Event(), []
+
+        class FakeServer:
+            server_address = ("127.0.0.1", 0)
+            def __init__(self, address, handler):
+                created.append(self)
+            def serve_forever(self):
+                if not stopped.wait(5):
+                    raise KeyboardInterrupt
+            def shutdown(self):
+                stopped.set()
+            def server_close(self):
+                pass
+
+        captured = {}
+        def handler(service, token, setup):
+            captured["setup"] = setup
+        with patch.object(server, "LocalHTTPServer", FakeServer), patch.object(server, "make_handler", handler), \
+                patch.object(server, "Onboarding") as onboarding, patch("builtins.print"):
+            server.serve(server.build_parser().parse_args(["--demo", "--port", "0"]), parent_input=parent_input, **options)
+        return captured["setup"], onboarding, stopped.is_set()
+
+    def test_setup_exit_closes_the_desktop_child_it_started(self):
+        setup, onboarding, _ = self.run_serve()
+        self.assertTrue(setup.enabled)
+        onboarding.return_value.close.assert_called_once_with()
+
+    def test_desktop_mode_builds_no_onboarding_and_stops_at_parent_end_of_file(self):
+        setup, onboarding, stopped = self.run_serve(io.BytesIO(b"ignored"), setup_enabled=False)
+        self.assertFalse(setup.enabled)
+        self.assertIsNone(setup.onboarding)
+        onboarding.assert_not_called()
+        self.assertTrue(stopped, "End of the parent pipe did not stop the server")
+
+    def test_parent_watch_tolerates_a_broken_pipe(self):
+        from jarvis.server import watch_parent
+        calls = []
+        class Broken:
+            def read(self, size):
+                raise OSError("pipe broken")
+        watch_parent(Broken(), lambda: calls.append(True))
+        self.assertEqual(calls, [True])
+
+    def test_setup_window_reports_setup_available(self):
+        httpd = LocalHTTPServer(("127.0.0.1", 0), make_handler(Service(clock=lambda: 0), "t" * 32, SetupContext(onboarding=MagicMock())))
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=3)
+            connection.request("GET", "/api/setup/diagnostics")
+            self.assertTrue(json.loads(connection.getresponse().read())["setup_available"])
+            connection.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(3)
+
+    def test_disabled_setup_context_never_reads_setup_state(self):
+        with patch("jarvis.server.Onboarding", side_effect=AssertionError("No onboarding in the desktop app")):
+            self.assertIsNone(SetupContext(enabled=False).onboarding)
+
+    def test_desktop_routes_hide_setup_but_keep_status_actions_and_exit(self):
+        exits = threading.Event()
+        service = Service(clock=lambda: 0)
+        httpd = LocalHTTPServer(("127.0.0.1", 0), make_handler(service, "t" * 32, SetupContext(enabled=False, on_exit=exits.set)))
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        host = "127.0.0.1:%d" % httpd.server_address[1]
+
+        def call(method, path, body=None):
+            connection = http.client.HTTPConnection(host, timeout=3)
+            headers = {"Content-Type": "application/json", "X-Jarvis-Token": "t" * 32, "Origin": "http://" + host}
+            connection.request(method, path, None if body is None else json.dumps(body), headers)
+            response = connection.getresponse()
+            result = response.status, response.read()
+            connection.close()
+            return result
+        try:
+            for path in ("/setup", "/setup.js", "/setup.css", "/setup-catalog.json", "/quickstart-catalog.json",
+                         "/provider-catalog.json", "/api/quickstart", "/api/setup/config"):
+                self.assertEqual(call("GET", path)[0], 404, path)
+            for path, body in (("/api/quickstart/save", {"choices": {}}), ("/api/quickstart/install", {"consent": True}),
+                               ("/api/quickstart/launch", {"consent": True}), ("/api/quickstart/key", {"provider": "openai", "key": "x"}),
+                               ("/api/setup/apply", {"answers": {}})):
+                self.assertEqual(call("POST", path, body)[0], 404, path)
+            self.assertEqual(call("GET", "/")[0], 200)
+            self.assertEqual(call("GET", "/api/status")[0], 200)
+            status, body = call("GET", "/api/setup/diagnostics")
+            self.assertEqual(status, 200)
+            self.assertFalse(json.loads(body)["setup_available"])
+            self.assertEqual(call("POST", "/api/command", {"command": "active"})[0], 200)
+            self.assertTrue(service.presence.active)
+            self.assertEqual(call("POST", "/api/setup/exit", {})[0], 200)
+            self.assertTrue(exits.wait(3))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(3)
+
+    def test_a_second_server_cannot_take_the_same_port(self):
+        first = LocalHTTPServer(("127.0.0.1", 0), make_handler(Service(clock=lambda: 0), "t" * 32, SetupContext(enabled=False)))
+        thread = threading.Thread(target=first.serve_forever, daemon=True)
+        thread.start()
+        port = first.server_address[1]
+        try:
+            with self.assertRaises(OSError):
+                LocalHTTPServer(("127.0.0.1", port), make_handler(Service(clock=lambda: 0), "t" * 32, SetupContext(enabled=False))).server_close()
+            if sys.platform == "win32":
+                self.assertEqual(first.socket.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE), 1)
+                self.assertEqual(first.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 0)
+                intruder = socket.socket()
+                intruder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    with self.assertRaises(OSError):
+                        intruder.bind(("127.0.0.1", port))
+                finally:
+                    intruder.close()
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            connection.request("GET", "/api/status")
+            self.assertEqual(connection.getresponse().status, 200)
+            connection.close()
+        finally:
+            first.shutdown()
+            first.server_close()
+            thread.join(3)
+
+    def test_posix_keeps_address_reuse(self):
+        from jarvis import server
+        if sys.platform == "win32":
+            self.assertFalse(server.LocalHTTPServer.allow_reuse_address)
+        else:
+            self.assertTrue(server.LocalHTTPServer.allow_reuse_address)
+
+
+CHILD = """import sys
+sys.path.insert(0, sys.argv[1])
+from jarvis import server
+server.serve(server.build_parser().parse_args(["--demo", "--port", "0"]), setup_enabled=False, parent_input=sys.stdin.buffer)
+"""
+
+
+class DesktopProcessTests(unittest.TestCase):
+    """A real demo-mode server process (no camera, microphone or actions) with a parent-watch pipe."""
+
+    def start(self):
+        import subprocess
+        repo = str(Path(__file__).resolve().parents[1])
+        env = {key: value for key, value in os.environ.items() if key.upper() in {"SYSTEMROOT", "WINDIR"}}
+        child = subprocess.Popen([sys.executable, "-I", "-u", "-c", CHILD, repo], stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
+        self.addCleanup(child.stdout.close)
+        self.addCleanup(child.stdin.close)
+        self.addCleanup(lambda: child.poll() is None and (child.kill(), child.wait(5)))
+        line = child.stdout.readline()
+        self.assertTrue(line.startswith("Jarvis: http://127.0.0.1:"), line)
+        return child, line.split("http://", 1)[1].strip()
+
+    def test_parent_end_of_file_stops_the_desktop_server_gracefully(self):
+        child, host = self.start()
+        connection = http.client.HTTPConnection(host, timeout=3)
+        connection.request("GET", "/setup")
+        self.assertEqual(connection.getresponse().status, 404)
+        connection.close()
+        child.stdin.close()
+        self.assertEqual(child.wait(10), 0)
+        self.assertIn("Jarvis stopped.", child.stdout.read())
+
+    def test_exit_route_stops_the_desktop_server(self):
+        child, host = self.start()
+        connection = http.client.HTTPConnection(host, timeout=3)
+        connection.request("GET", "/api/session")
+        token = json.loads(connection.getresponse().read())["token"]
+        connection.request("POST", "/api/setup/exit", "{}", {"Content-Type": "application/json", "X-Jarvis-Token": token})
+        self.assertEqual(connection.getresponse().status, 200)
+        connection.close()
+        self.assertEqual(child.wait(10), 0)

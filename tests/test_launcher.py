@@ -32,6 +32,20 @@ class LauncherTests(unittest.TestCase):
             service = Service()
             self.assertFalse(service.presence.active or service.presence.lock_armed or service.presence.sheet_armed)
 
+    def test_desktop_app_never_runs_setup_and_watches_its_parent_only_when_asked(self):
+        from jarvis import desktop
+        with patch.dict(sys.modules, {"cv2": SimpleNamespace()}), patch("jarvis.desktop.sys.platform", "win32"),                 patch("jarvis.server.check_args"), patch("jarvis.server.serve") as serve:
+            self.assertEqual(desktop.main(["--feature", "camera"]), 0)
+            self.assertEqual(serve.call_args.kwargs, {"setup_enabled": False, "parent_input": None})
+            pipe = io.BytesIO()
+            with patch("jarvis.desktop.sys.stdin", SimpleNamespace(buffer=pipe)):
+                self.assertEqual(desktop.main(["--feature", "camera", "--parent-watch"]), 0)
+            self.assertIs(serve.call_args.kwargs["parent_input"], pipe)
+            serve.reset_mock()
+            with patch("jarvis.desktop.sys.stdin", None), redirect_stdout(io.StringIO()):
+                self.assertEqual(desktop.main(["--feature", "camera", "--parent-watch"]), 2)
+            serve.assert_not_called()
+
     def test_version_gate(self):
         self.assertFalse(launcher.python_ok((3, 10, 9)))
         self.assertTrue(launcher.python_ok((3, 11, 0)))
