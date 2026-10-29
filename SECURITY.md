@@ -19,3 +19,9 @@ The allowance slider limits this installation's OpenAI and Anthropic attempts. A
 The Windows ZIP includes a pinned Python runtime, dependencies, and a checksum-verified hand model. Their license notices are retained. It is unsigned application code. Verify the release checksum and source before running it. The source installer creates only the project's `.venv`; it never elevates privileges or disables Windows protections. Device use and real actions remain separate choices after installation.
 
 Use synthetic inputs when reporting a bug. Do not attach camera images, private documents, or credentials. See the build guide for observation-only hardware checks before enabling real actions.
+
+## Reporting a vulnerability
+
+Use [Security > Report a vulnerability](https://github.com/Jgolding1998/jarvis-workbench/security/advisories/new) to send a private report. Do not submit vulnerability details through the public feedback form.
+
+Include the affected version, platform, expected behavior and a synthetic reproduction. Leave out credentials, personal information and private files.

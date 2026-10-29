@@ -51,7 +51,7 @@ For the voice model and live launch examples, follow the [setup guide](docs/BUIL
 | Offline voice activation (Vosk) | Implemented | Windows, microphone, voice packages, a downloaded model | $0 |
 | Hand control practice (virtual cursor, clap to stop) | Implemented | Python | $0 |
 | Local hand tracking with optional real cursor | Implemented, experimental | Windows, camera, hand packages and model | $0 |
-| AI text chat: NVIDIA, OpenAI, Anthropic, Ollama | Implemented, optional | Your own cloud API key or local Ollama model | Set by the provider or your hardware |
+| AI text chat: NVIDIA, OpenAI, Anthropic, Ollama | Implemented, optional. OpenAI/Anthropic requests pause after 2026-11-27 (UTC) until pricing is reviewed again | Your own cloud API key or local Ollama model | Set by the provider or your hardware |
 | Read AI replies aloud in local setup | Implemented, opt-in | A browser voice marked as on-device | $0 |
 | Windows voice typing or existing Wispr Flow | External dictation into text boxes | Your own system settings or installed tool | Set by the tool |
 | ElevenLabs, MCP, calendar and email integration | Not built in | Future integration | Not included |
