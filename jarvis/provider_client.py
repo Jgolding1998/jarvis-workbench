@@ -172,8 +172,13 @@ class _Reply:
         left = self._connection.deadline - time.monotonic()
         if left <= 0 or self._connection.cancelled.is_set():
             raise TimeoutError()
-        self._connection.live_socket.settimeout(left)
-        chunk = self._response.read1(amount)
+        try:
+            self._connection.live_socket.settimeout(left)
+            chunk = self._response.read1(amount)
+        except (OSError, ValueError):
+            if self._connection.cancelled.is_set() or time.monotonic() >= self._connection.deadline:
+                raise TimeoutError() from None
+            raise
         if self._connection.cancelled.is_set() or time.monotonic() >= self._connection.deadline:
             raise TimeoutError()
         return chunk
@@ -410,6 +415,8 @@ def respond(provider, prompt, key=None, opener=None):
         request.headers.clear()
         headers.clear()
         key = None
+    if time.monotonic() >= deadline:
+        failure, text = "timeout", None
     if failure:
         chunks, chunk, read = [], None, None
         prompt = payload = messages = opener = text = None

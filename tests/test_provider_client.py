@@ -206,6 +206,20 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "timeout")
         opener.open.assert_called_once()
 
+    def test_socket_shutdown_at_the_total_deadline_is_reported_as_timeout(self):
+        for finished, expected in ((144.9, "unavailable"), (145.0, "timeout")):
+            clock = [100.0]
+            opener = Mock()
+            def disconnected(*args, **kwargs):
+                clock[0] = finished
+                raise OSError("synthetic connection closure")
+            opener.open.side_effect = disconnected
+            with self.subTest(finished=finished), patch.object(client.time, "monotonic", side_effect=lambda: clock[0]):
+                with self.assertRaises(client.ProviderError) as error:
+                    client.respond("openai", "hello", KEY, opener)
+                self.assertEqual(error.exception.code, expected)
+                opener.open.assert_called_once()
+
     def test_short_key_redaction_cannot_expand_prompt_or_output_beyond_limits(self):
         opener = Mock()
         with self.assertRaises(client.ProviderError) as error:
