@@ -4,11 +4,13 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import tarfile
 import unittest
 import zipfile
+from unittest.mock import Mock, patch
 
 from jarvis import bundle, install_tools
 
@@ -143,6 +145,20 @@ class BundleModuleTests(unittest.TestCase):
 
 
 class BuildManifestTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows signature checker")
+    def test_signature_checker_isolates_powershell_modules_and_fails_closed(self):
+        row = {"Name": "python.exe", "Status": "Valid", "Subject": "CN=Python, O=Python Software Foundation, C=US"}
+        process = Mock(returncode=0, stdout=json.dumps([row]))
+        with patch.dict(os.environ, {"PSModulePath": "incompatible-module-canary"}), patch.object(builder.subprocess, "run", return_value=process) as run:
+            self.assertEqual(builder.verify_authenticode(ROOT, "Python Software Foundation")["checked"], 1)
+            self.assertFalse(any(key.upper() == "PSMODULEPATH" for key in run.call_args.kwargs["env"]))
+            process.stdout = ""
+            with self.assertRaises(builder.BuildError):
+                builder.verify_authenticode(ROOT, "Python Software Foundation")
+            process.stdout = json.dumps([{**row, "Subject": "CN=Python, O=Python Software Foundation Other, C=US"}])
+            with self.assertRaises(builder.BuildError):
+                builder.verify_authenticode(ROOT, "Python Software Foundation")
+
     def test_real_build_tools_lock_is_accepted_by_the_installer_validator(self):
         manifest = builder.load_build_manifest(install_tools=install_tools)
         self.assertEqual(builder.validate_tools_lock(builder.TOOLS_LOCK_PATH, manifest["build_tools"]), builder.sha256_file(builder.TOOLS_LOCK_PATH))

@@ -504,21 +504,29 @@ def fetch_python(work, manifest, tools, env):
     return archive
 
 
-def verify_authenticode(runtime, subject):
+def verify_authenticode(runtime, subject, env=None):
     """Check every runtime binary carries a valid Authenticode signature from the PSF (or Microsoft for the VC runtime)."""
     if os.name != "nt":
         raise BuildError("Authenticode verification needs Windows")
     literal = str(runtime).replace("'", "''")
-    script = ("Get-ChildItem -LiteralPath '%s' -File | Where-Object { $_.Extension -in '.exe','.dll','.pyd' } | ForEach-Object { "
+    script = ("$ErrorActionPreference = 'Stop'; Get-ChildItem -LiteralPath '%s' -File | Where-Object { $_.Extension -in '.exe','.dll','.pyd' } | ForEach-Object { "
               "$s = Get-AuthenticodeSignature -LiteralPath $_.FullName; [pscustomobject]@{ Name = $_.Name; Status = $s.Status.ToString(); "
               "Subject = if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { '' } } } | ConvertTo-Json -Compress" % literal)
-    output = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=300).stdout
-    results = json.loads(output)
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    powershell = str(Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+    clean_env = {key: value for key, value in (env or os.environ).items() if key.upper() in {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "TEMP", "TMP", "TMPDIR"}}
+    process = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=300, env=clean_env)
+    try:
+        if process.returncode != 0 or not process.stdout or len(process.stdout) > 64 * 1024:
+            raise ValueError()
+        results = json.loads(process.stdout)
+    except (ValueError, TypeError):
+        raise BuildError("The Windows signature checker could not return a valid result") from None
     results = results if isinstance(results, list) else [results]
     problems = []
     for item in results:
         owner = "Microsoft Corporation" if item["Name"].lower().startswith("vcruntime") else subject
-        if item["Status"] != "Valid" or f"O={owner}" not in item["Subject"]:
+        if item["Status"] != "Valid" or not re.search(r"(?:^|,)\s*O=" + re.escape(owner) + r"(?:,|$)", item["Subject"]):
             problems.append(f"{item['Name']}: {item['Status']} {item['Subject']}")
     if problems or not results:
         raise BuildError("Runtime Authenticode check failed: " + "; ".join(problems))
@@ -606,7 +614,7 @@ def stage_bundle(work, manifest, app_contents, source, install_tools, bundle_mod
     extract_zip(python_zip, runtime)
     if not (runtime / "python.exe").is_file() or not (runtime / pin["stdlib_zip"]).is_file() or not (runtime / "LICENSE.txt").is_file():
         raise BuildError("The embeddable package layout is unexpected")
-    authenticode = verify_authenticode(runtime, pin["authenticode_subject"])
+    authenticode = verify_authenticode(runtime, pin["authenticode_subject"], env=env)
     write_text(runtime / pin["pth_name"], pth_text(pin), crlf=True)
 
     installed = {}
