@@ -53,7 +53,7 @@ For the voice model and live launch examples, follow the [setup guide](docs/BUIL
 | Presence guard (people count) | Implemented | Camera, OpenCV | $0 |
 | Privacy lock | Implemented | Windows, camera | $0 |
 | Boss Alert synthetic workbook (playful demo) | Implemented | Windows, camera, spreadsheet app | $0 |
-| Offline voice activation (Vosk) | Implemented | Microphone, voice packages, a downloaded model | $0 |
+| Offline voice activation (Vosk) | Implemented | Windows, microphone, voice packages, a downloaded model | $0 |
 | Hand control practice (virtual cursor, clap to stop) | Implemented | Python | $0 |
 | Local hand tracking with optional real cursor | Implemented, experimental | Windows, camera, hand packages and model | $0 |
 | Setup wizard read-aloud | Implemented, optional | A browser voice that runs on your device | $0 |

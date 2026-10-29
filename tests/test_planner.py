@@ -162,6 +162,12 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(status(plan, "privacy_lock")["reasons"], ["Needs Windows"])
         self.assertEqual(plan["launch_command"], "./.venv/bin/python -m jarvis.server --camera")
 
+    def test_guided_voice_is_only_offered_on_the_verified_platform(self):
+        plan = plan_for(os="macos", microphone=True, voice="offline_vosk")
+        self.assertEqual(status(plan, "offline_voice")["status"], "unavailable")
+        self.assertIn("Needs Windows", status(plan, "offline_voice")["reasons"])
+        self.assertNotIn("--voice-model", plan["launch_command"])
+
     def test_budget_is_a_ceiling_not_an_upsell(self):
         for preset in [p["id"] for p in CATALOG["presets"]]:
             features = next(p for p in CATALOG["presets"] if p["id"] == preset)["features"]
@@ -236,7 +242,8 @@ class PlanTests(unittest.TestCase):
                 voice = plan_for(preset="custom", features=[], os=system, camera=False, microphone=True, voice="offline_vosk")
                 simulator = plan_for(preset="custom", features=[], os=system, camera=False, microphone=False)
                 self.assertEqual(camera["launch_command"].split()[0], interpreter)
-                self.assertEqual(voice["launch_command"].split()[0], interpreter)
+                self.assertEqual(voice["launch_command"].split()[0], interpreter if system == "windows" else "python")
+                self.assertEqual("--voice-model" in voice["launch_command"], system == "windows")
                 self.assertEqual(simulator["launch_command"].split()[0], "python")
 
     def test_optional_install_steps_use_the_local_menu(self):

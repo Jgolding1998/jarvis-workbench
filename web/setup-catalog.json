@@ -148,6 +148,7 @@
       "selectable": false,
       "summary": "Vosk listens on this computer for the word active. Nothing is uploaded.",
       "requires": {
+        "os": ["windows"],
         "microphone": true,
         "voice": [
           "offline_vosk"
@@ -223,7 +224,7 @@
       "name": "Offline voice (Vosk)",
       "kind": "implemented",
       "url": "https://alphacephei.com/vosk/models",
-      "guidance": "Implemented. Listens locally for active. Needs a microphone, two Python packages, and a model you download."
+      "guidance": "The guided voice setup supports Windows in this release. It listens locally for active and needs a microphone, optional packages, and a model you download. Use typed commands on other systems."
     },
     {
       "id": "platform_voice",

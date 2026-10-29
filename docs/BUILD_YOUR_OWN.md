@@ -38,6 +38,8 @@ The HOG detector needs substantial body framing. A tight seated head-and-shoulde
 
 ## 4. Add offline voice
 
+The guided voice setup supports Windows in this release. Use typed commands on other systems; the pinned Vosk package has no macOS wheel.
+
 Choose **Offline voice** or **All optional tools** in the installer. Voice setup builds the pinned, checksum-verified `srt` dependency from its official source archive; the other dependencies use wheels. The installer accepts only that reviewed source archive.
 
 Then download a small English model from the [Vosk model catalog](https://alphacephei.com/vosk/models), read its license, and unzip its contents into `models/voice-en`. Check that these paths exist:
