@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import closing
 from datetime import date, datetime, timezone
 from functools import wraps
+import errno
 import math
 import os
 from pathlib import Path
@@ -114,7 +115,8 @@ class BudgetLedger:
                 with candidate.open("rb") as stream:
                     return stream.read(20)
             except PermissionError as error:
-                if not windows or getattr(error, "winerror", None) not in {5, 32, 33} or time.monotonic() >= until:
+                sharing_error = getattr(error, "winerror", None) in {5, 32, 33} or error.errno == errno.EACCES
+                if not windows or not sharing_error or time.monotonic() >= until:
                     raise
                 time.sleep(0.01)
 

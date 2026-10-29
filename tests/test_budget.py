@@ -46,7 +46,8 @@ def first_process_reservations(root, barrier, queue):
             while trace is not None:
                 lines.append((Path(trace.tb_frame.f_code.co_filename).name, trace.tb_lineno))
                 trace = trace.tb_next
-            failures.append((type(cause).__name__, getattr(cause, "sqlite_errorcode", None), lines))
+            failures.append((type(cause).__name__, getattr(cause, "sqlite_errorcode", None),
+                             getattr(cause, "errno", None), getattr(cause, "winerror", None), lines))
     queue.put((accepted, failures))
 
 
@@ -127,6 +128,19 @@ class BudgetTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.ledger._header(self.path,windows=False)
             pause.assert_not_called()
+
+    def test_windows_crt_sharing_error_without_winerror_is_retried(self):
+        self.ledger.reserve("openai",1)
+        original = Path.open
+        attempts = []
+        def temporarily_shared(path,*args,**kwargs):
+            attempts.append(path)
+            if len(attempts) == 1:
+                raise PermissionError(13,"Synthetic CRT sharing conflict")
+            return original(path,*args,**kwargs)
+        with patch.object(Path,"open",temporarily_shared):
+            self.assertEqual(self.ledger._header(self.path,windows=True)[:16],b"SQLite format 3\0")
+        self.assertEqual(len(attempts),2)
 
     def test_reservations_persist_and_free_calls_do_not_consume_them(self):
         self.assertEqual(self.ledger.reserve("openai",1)["reserved_usd"],0.01)
