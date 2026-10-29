@@ -11,3 +11,5 @@ models/
 *.mp4
 *.key
 *.pem
+work/
+site-dist/

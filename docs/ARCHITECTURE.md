@@ -27,6 +27,22 @@ Five seconds without a fresh observation is a camera fault. An armed privacy loc
 
 The policy emits at most one lock request for a continuous absence or fault episode. A desktop action error is recorded rather than reported as success. An operating-system lock request can still fail or be denied, and no session notification listener confirms completion. This is why Windows auto-lock remains the primary mechanism.
 
+## Hand control and camera ownership
+
+Hand control is a separate state machine (`jarvis/handcontrol.py`) with modes off, practice, and watching. It never changes the presence policy. Live `watch me` requires a gesture engine, the `--allow-hand-control` launch flag, and, for voice, an explicit dashboard opt-in. Real cursor output requires a second dashboard opt-in and is off at boot. Practice events only update a virtual cursor.
+
+A `CameraBroker` gives the physical camera to one owner at a time: the presence guard or hand control. Sharing one stream between two detectors would need a frame broker with its own failure semantics, so this edition uses exclusive modes. Starting one mode while the other owns the camera is rejected with a clear message and leaves the running mode and its arming unchanged. A clap, Esc, `stop mouse`, the hand stop button, or a cursor failure stops hand control and releases its lease; none of them stops or disarms the presence guard. **Stop and disarm** stops both.
+
+On Windows, an Esc watcher polls `GetAsyncKeyState` only while hand control runs. The first read after activation is discarded so a stale key press cannot stop a new session.
+
+## Setup wizard boundary
+
+`web/setup.html`, `setup.js`, `setup.css`, and `setup-catalog.json` are a standalone static wizard. The planner is deterministic and implemented twice, in `setup.js` and `jarvis/planner.py`; a test runs both over a large set of answers and requires identical plans. In hosted mode (`<meta name="jarvis-mode" content="hosted">`, or any address other than `127.0.0.1`) the page fetches only the two catalog files beside it and never calls a local address.
+
+On the local server the wizard adds read-only diagnostics (Python version, operating system, whether optional packages and a voice model are present, using `importlib.util.find_spec` without importing them) and an apply route. Apply requires the session token, accepts at most 8 KiB, rejects duplicate keys, non-finite numbers, unknown or prototype-named fields, and any value outside fixed lists. It writes `runtime/setup-config.json` atomically with a temporary file and `os.replace`. The saved file holds only the answers. Nothing reads it to arm actions, open devices, or build shell commands; launch commands are assembled from fixed tokens. The exit route stops the local server when the user declines setup or chooses **Stop Jarvis**.
+
+`Start-Jarvis.cmd` looks for Python 3.11 or newer and runs `python -m jarvis.launcher`. It does not install software, change PowerShell policy, request administrator rights, or download anything.
+
 ## Request boundary
 
 The server binds to IPv4 loopback only. It accepts an exact `127.0.0.1:<port>` Host header and rejects a foreign Origin. Mutations require a fresh per-process session token, a JSON content type, and a body no larger than 2 KiB. There are no CORS grants, arbitrary file routes, command execution endpoints, credential endpoints, telemetry, or cloud services.

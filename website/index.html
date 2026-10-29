@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Make a practical Jarvis setup around your computer, your uses, and your budget. See the four hand moves, practice them here, and add permissions deliberately.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>Get Jarvis Workbench | Your hands. Your desk.</title>
+  <link rel="icon" href="favicon.svg">
+  <link rel="stylesheet" href="site.css"><script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <path id="g-palm" d="M60 120C60 108 68 103 78 103L134 105C145 106 151 113 150 124L146 172C144 186 136 196 126 202L126 238 84 238 84 202C70 194 62 184 61 170Z"/>
+      <path id="g-cover" d="M64 126 146 126 142 172C140 184 134 192 122 198L122 240 88 240 88 198C74 191 66 182 65 170Z"/>
+      <path id="g-index" d="M76 132 70 78 64 40" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-middle" d="M98 132 98 70 98 26" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-ring" d="M119 132 124 74 128 36" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-pinky" d="M139 134 148 92 156 64" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-thumb" d="M82 180 46 150 28 120" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-middle-base" d="M98 132 98 86" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-middle-tip" d="M98 86 84 100" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-thumb-middle" d="M82 180 54 146 82 104" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-ring-base" d="M119 132 120 86" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-ring-tip" d="M120 86 106 100" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="g-thumb-ring" d="M82 180 64 140 104 104" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </defs>
+    <symbol id="g-hand-open" viewBox="0 0 200 240">
+      <use href="#g-palm" fill="#e9f4df" stroke="#234f3c" stroke-width="5" stroke-linejoin="round"/>
+      <use href="#g-pinky" stroke="#234f3c" stroke-width="19"/><use href="#g-pinky" stroke="#e9f4df" stroke-width="14"/><use href="#g-ring" stroke="#234f3c" stroke-width="22"/><use href="#g-ring" stroke="#e9f4df" stroke-width="17"/><use href="#g-middle" stroke="#234f3c" stroke-width="22"/><use href="#g-middle" stroke="#e9f4df" stroke-width="17"/><use href="#g-index" stroke="#234f3c" stroke-width="22"/><use href="#g-index" stroke="#e9f4df" stroke-width="17"/>
+      <use href="#g-cover" fill="#e9f4df"/>
+      <use href="#g-thumb" stroke="#234f3c" stroke-width="24"/><use href="#g-thumb" stroke="#e9f4df" stroke-width="19"/><circle cx="82" cy="180" r="12.5" fill="#e9f4df"/>
+    </symbol>
+    <symbol id="g-hand-left-click" viewBox="0 0 200 240">
+      <use href="#g-palm" fill="#e9f4df" stroke="#234f3c" stroke-width="5" stroke-linejoin="round"/>
+      <use href="#g-pinky" stroke="#234f3c" stroke-width="19"/><use href="#g-pinky" stroke="#e9f4df" stroke-width="14"/><use href="#g-ring" stroke="#234f3c" stroke-width="22"/><use href="#g-ring" stroke="#e9f4df" stroke-width="17"/><use href="#g-index" stroke="#234f3c" stroke-width="22"/><use href="#g-index" stroke="#e9f4df" stroke-width="17"/><use href="#g-middle-base" stroke="#234f3c" stroke-width="22"/><use href="#g-middle-base" stroke="#e9f4df" stroke-width="17"/>
+      <use href="#g-cover" fill="#e9f4df"/>
+      <use href="#g-middle-tip" stroke="#234f3c" stroke-width="22"/><use href="#g-middle-tip" stroke="#d2e9c2" stroke-width="17"/>
+      <use href="#g-thumb-middle" stroke="#234f3c" stroke-width="24"/><use href="#g-thumb-middle" stroke="#e9f4df" stroke-width="19"/><circle cx="82" cy="180" r="12.5" fill="#e9f4df"/>
+      <circle cx="84" cy="102" r="16" fill="none" stroke="#bd5f32" stroke-width="4"/>
+    </symbol>
+    <symbol id="g-hand-right-click" viewBox="0 0 200 240">
+      <use href="#g-palm" fill="#e9f4df" stroke="#234f3c" stroke-width="5" stroke-linejoin="round"/>
+      <use href="#g-pinky" stroke="#234f3c" stroke-width="19"/><use href="#g-pinky" stroke="#e9f4df" stroke-width="14"/><use href="#g-middle" stroke="#234f3c" stroke-width="22"/><use href="#g-middle" stroke="#e9f4df" stroke-width="17"/><use href="#g-index" stroke="#234f3c" stroke-width="22"/><use href="#g-index" stroke="#e9f4df" stroke-width="17"/><use href="#g-ring-base" stroke="#234f3c" stroke-width="22"/><use href="#g-ring-base" stroke="#e9f4df" stroke-width="17"/>
+      <use href="#g-cover" fill="#e9f4df"/>
+      <use href="#g-ring-tip" stroke="#234f3c" stroke-width="22"/><use href="#g-ring-tip" stroke="#d2e9c2" stroke-width="17"/>
+      <use href="#g-thumb-ring" stroke="#234f3c" stroke-width="24"/><use href="#g-thumb-ring" stroke="#e9f4df" stroke-width="19"/><circle cx="82" cy="180" r="12.5" fill="#e9f4df"/>
+      <circle cx="106" cy="102" r="16" fill="none" stroke="#bd5f32" stroke-width="4"/>
+    </symbol>
+    <symbol id="g-index-mark" viewBox="0 0 200 240">
+      <circle cx="64" cy="40" r="17" fill="none" stroke="#bd5f32" stroke-width="3" stroke-dasharray="5 5"/>
+      <circle cx="64" cy="40" r="7" fill="#bd5f32"/>
+    </symbol>
+    <symbol id="g-landmarks" viewBox="0 0 200 240">
+      <g fill="none" stroke="#bd5f32" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M104 216 82 180 58 160 42 140 29 122M104 216 75 116 71 86 67 62 64 42M98 114 98 80 98 52 98 28M120 116 123 84 126 58 128 38M104 216 140 122 145 100 151 82 155 66M75 116 98 114 120 116 140 122"/>
+      </g>
+      <g fill="#fffdfa" stroke="#bd5f32" stroke-width="2.5">
+        <circle cx="104" cy="216" r="5"/><circle cx="82" cy="180" r="4"/><circle cx="58" cy="160" r="4"/><circle cx="42" cy="140" r="4"/><circle cx="29" cy="122" r="4"/>
+        <circle cx="75" cy="116" r="4"/><circle cx="71" cy="86" r="4"/><circle cx="67" cy="62" r="4"/><circle cx="64" cy="42" r="4"/>
+        <circle cx="98" cy="114" r="4"/><circle cx="98" cy="80" r="4"/><circle cx="98" cy="52" r="4"/><circle cx="98" cy="28" r="4"/>
+        <circle cx="120" cy="116" r="4"/><circle cx="123" cy="84" r="4"/><circle cx="126" cy="58" r="4"/><circle cx="128" cy="38" r="4"/>
+        <circle cx="140" cy="122" r="4"/><circle cx="145" cy="100" r="4"/><circle cx="151" cy="82" r="4"/><circle cx="155" cy="66" r="4"/>
+      </g>
+    </symbol>
+  </svg>
+  <header class="nav wrap"><a class="brand" href="index.html" aria-label="Jarvis Workbench home"><span class="brand-mark">J</span><span>jarvis<span class="brand-light">workbench</span></span></a><nav aria-label="Main"><a href="#hands">Hand guide</a><a href="#practice">Practice</a><a href="#needs">What you need</a><a href="https://github.com/Jgolding1998/jarvis-workbench" target="_blank" rel="noopener noreferrer">Source ↗</a><a class="button small" href="setup.html">Build my setup <span aria-hidden="true">↗</span></a></nav></header>
+  <main id="main">
+    <section class="hero wrap">
+      <div class="hero-copy"><div class="eyebrow"><span class="live-dot"></span> A LOCAL DESKTOP WORKBENCH</div><h1>Your hands.<br>Your desk.<br><em>Your Jarvis.</em></h1><p class="lead">A useful assistant starts with what <strong>you</strong> need. Choose your tools, make a plan, and try the controls before giving them permission.</p><div class="hero-actions"><a class="button primary" href="setup.html">Let’s set yours up <span aria-hidden="true">↗</span></a><a class="text-link" href="#hands">See how it works <span aria-hidden="true">↓</span></a></div><p class="quiet">Core features need no paid AI plan. Setup works on a phone; desktop controls run on your computer.</p></div>
+      <figure class="workbench shot" id="dashboard-shot"><div class="workbench-top"><span><span class="live-dot"></span> JARVIS / DASHBOARD</span><span class="chip">ON YOUR COMPUTER</span></div><div class="shot-frame"><img id="dashboard-img" src="dashboard-preview.png" width="1440" height="900" alt="Screenshot of the Jarvis dashboard running on a Windows computer." decoding="async"><div class="shot-missing" aria-hidden="true"><span class="brand-mark">J</span><span>Dashboard preview</span></div></div><figcaption>The dashboard runs on your own computer. Every device stays off until you switch it on there.</figcaption></figure>
+    </section>
+
+    <section class="hands section wrap" id="hands" aria-labelledby="hands-title">
+      <div class="section-heading"><div><p class="eyebrow">HAND CONTROL IN FOUR MOVES</p><h2 id="hands-title">Say it. Show it.<br>Point. Clap to stop.</h2></div><p class="heading-note">This is the whole vocabulary. You can learn it in a minute and practice it below without a camera.</p></div>
+      <ol class="gesture-steps">
+        <li class="gesture-card">
+          <figure>
+            <svg viewBox="0 0 280 200" role="img" aria-labelledby="gs1-t gs1-d"><title id="gs1-t">Step 1: say watch me</title><desc id="gs1-d">A computer screen with a webcam on top. A speech bubble says watch me.</desc>
+              <rect x="40" y="58" width="150" height="100" rx="10" fill="#fffdfa" stroke="#234f3c" stroke-width="3"/><rect x="52" y="70" width="126" height="76" rx="5" fill="#e9ede3"/><path d="M98 158h34l6 22h-46Z" fill="#d6ddd4" stroke="#234f3c" stroke-width="3" stroke-linejoin="round"/><path d="M80 182h70" stroke="#234f3c" stroke-width="3" stroke-linecap="round"/><rect x="101" y="46" width="28" height="12" rx="6" fill="#234f3c"/><circle cx="115" cy="52" r="3.5" fill="#c6f0b3"/>
+              <rect x="62" y="84" width="60" height="6" rx="3" fill="#c4cdb9"/><rect x="62" y="98" width="88" height="6" rx="3" fill="#c4cdb9"/><rect x="62" y="112" width="44" height="6" rx="3" fill="#c4cdb9"/>
+              <path d="M168 18h96a8 8 0 0 1 8 8v36a8 8 0 0 1-8 8h-62l-20 18 4-18h-18a8 8 0 0 1-8-8V26a8 8 0 0 1 8-8Z" fill="#234f3c"/><text x="216" y="50" text-anchor="middle" fill="#eff7ed" font-size="17" font-weight="700" font-family="Inter,Segoe UI,Arial,sans-serif">“Watch me”</text>
+            </svg>
+          </figure>
+          <span class="step-no">01</span><h3>Say “watch me”</h3><p>Or type it. Jarvis turns on the camera for hand control only. “Start hand tracking” works too.</p>
+        </li>
+        <li class="gesture-card">
+          <figure>
+            <svg viewBox="0 0 280 200" role="img" aria-labelledby="gs2-t gs2-d"><title id="gs2-t">Step 2: show an open hand</title><desc id="gs2-d">An open hand with the palm facing the camera. Small dots mark the points the tracker finds on the wrist, palm, and each finger.</desc>
+              <rect x="56" y="8" width="168" height="186" rx="14" fill="none" stroke="#9fb197" stroke-width="2" stroke-dasharray="7 7"/>
+              <use href="#g-hand-open" x="65" y="14" width="150" height="180"/><use href="#g-landmarks" x="65" y="14" width="150" height="180"/>
+            </svg>
+          </figure>
+          <span class="step-no">02</span><h3>Show an open hand</h3><p>Palm toward the camera, about an arm’s length away, with light in front of you. Jarvis finds 21 points on your hand.</p>
+        </li>
+        <li class="gesture-card">
+          <figure>
+            <svg viewBox="0 0 280 200" role="img" aria-labelledby="gs3-t gs3-d"><title id="gs3-t">Step 3: point to steer, pinch to click</title><desc id="gs3-d">Your index fingertip steers the pointer. Touching thumb to middle fingertip is a left click. Touching thumb to ring fingertip is a right click.</desc>
+              <use href="#g-hand-open" x="0" y="36" width="112" height="134"/><use href="#g-index-mark" x="0" y="36" width="112" height="134"/>
+              <g fill="none" stroke="#bd5f32" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M36 30V12M30 18l6-6 6 6M10 58H0M5 52l-6 6 6 6M62 58h12M68 52l6 6-6 6"/></g>
+              <text x="56" y="194" text-anchor="middle" fill="#162722" font-size="13" font-weight="700" font-family="Inter,Segoe UI,Arial,sans-serif">Index steers</text>
+              <rect x="122" y="22" width="74" height="132" rx="10" fill="#fffdfa" stroke="#d6ddd4" stroke-width="2"/><use href="#g-hand-left-click" x="126" y="40" width="66" height="80"/>
+              <text x="159" y="138" text-anchor="middle" fill="#162722" font-size="12" font-weight="700" font-family="Inter,Segoe UI,Arial,sans-serif">Left click</text>
+              <rect x="204" y="22" width="74" height="132" rx="10" fill="#fffdfa" stroke="#d6ddd4" stroke-width="2"/><use href="#g-hand-right-click" x="208" y="40" width="66" height="80"/>
+              <text x="241" y="138" text-anchor="middle" fill="#162722" font-size="12" font-weight="700" font-family="Inter,Segoe UI,Arial,sans-serif">Right click</text>
+              <text x="159" y="176" text-anchor="middle" fill="#5a6c64" font-size="11" font-family="Inter,Segoe UI,Arial,sans-serif">thumb + middle</text>
+              <text x="241" y="176" text-anchor="middle" fill="#5a6c64" font-size="11" font-family="Inter,Segoe UI,Arial,sans-serif">thumb + ring</text>
+            </svg>
+          </figure>
+          <span class="step-no">03</span><h3>Point, then pinch</h3><p>Your index fingertip moves the pointer. Thumb to middle finger is a left click. Thumb to ring finger is a right click. Holding a pinch clicks once.</p>
+        </li>
+        <li class="gesture-card">
+          <figure>
+            <svg viewBox="0 0 280 200" role="img" aria-labelledby="gs4-t gs4-d"><title id="gs4-t">Step 4: clap to stop</title><desc id="gs4-d">First two open hands are held apart. Then the hands come together until the wrists nearly touch. Hand control stops.</desc>
+              <g transform="translate(64 30) scale(-1 1)"><use href="#g-hand-open" width="60" height="72"/></g><use href="#g-hand-open" x="62" y="30" width="60" height="72"/>
+              <path d="M30 112h62" stroke="#bd5f32" stroke-width="2.5" stroke-dasharray="4 5"/><circle cx="33" cy="95" r="4" fill="#bd5f32"/><circle cx="93" cy="95" r="4" fill="#bd5f32"/>
+              <text x="62" y="134" text-anchor="middle" fill="#162722" font-size="13" font-weight="700" font-family="Inter,Segoe UI,Arial,sans-serif">1. Apart</text>
+              <path d="M128 72h22M144 66l6 6-6 6" fill="none" stroke="#234f3c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              <g transform="translate(234 30) scale(-1 1)"><use href="#g-hand-open" width="60" height="72"/></g><use href="#g-hand-open" x="200" y="30" width="60" height="72"/>
+              <circle cx="203" cy="95" r="4" fill="#bd5f32"/><circle cx="231" cy="95" r="4" fill="#bd5f32"/>
+              <text x="217" y="134" text-anchor="middle" fill="#162722" font-size="13" font-weight="700" font-family="Inter,Segoe UI,Arial,sans-serif">2. Together</text>
+              <rect x="38" y="156" width="204" height="34" rx="17" fill="#234f3c"/><text x="140" y="178" text-anchor="middle" fill="#c6f0b3" font-size="13" font-weight="700" font-family="Inter,Segoe UI,Arial,sans-serif">Hand control stops</text>
+            </svg>
+          </figure>
+          <span class="step-no">04</span><h3>Clap to stop</h3><p>Hold both hands apart, then bring them together. The camera sees the clap. No microphone is used.</p>
+        </li>
+      </ol>
+      <div class="stop-strip">
+        <div><kbd>Esc</kbd><p><strong>Esc always stops hand control.</strong> It works on its own, even if the camera is slow.</p></div>
+        <div><span class="guard-icon" aria-hidden="true">◉</span><p><strong>A clap stops hand control only.</strong> The presence guard has its own switch and stays as you left it.</p></div>
+      </div>
+    </section>
+
+    <section class="practice section" id="practice" aria-labelledby="practice-title">
+      <div class="wrap">
+        <div class="section-heading"><div><p class="eyebrow">PRACTICE PAD</p><h2 id="practice-title">Try the moves here.<br>Nothing real moves.</h2></div><p class="heading-note">This pad runs inside this page only. It never asks for your camera, and it cannot move your real cursor. Your mouse, finger, or arrow keys stand in for your index finger.</p></div>
+        <div class="pad">
+          <div class="pad-stage" id="pad-stage" tabindex="0" aria-label="Practice area. After the open hand step, drag inside here or use the arrow keys to steer the practice pointer." aria-describedby="pad-status">
+            <div class="pad-window" aria-hidden="true">
+              <div class="window-bar"><i></i><i></i><i></i><span>practice desktop</span></div>
+              <div class="pad-targets"><div class="pad-target" data-target="Notes"><span class="t-icon t-note"></span>Notes</div><div class="pad-target" data-target="Photos"><span class="t-icon t-photo"></span>Photos</div><div class="pad-target" data-target="Budget"><span class="t-icon t-sheet"></span>Budget</div></div>
+              <div class="pad-menu" id="pad-menu" hidden><span>Open</span><span>Rename</span><span>Properties</span></div>
+            </div>
+            <svg class="pad-pointer" id="pad-pointer" viewBox="0 0 30 38" aria-hidden="true"><path d="M3 2v29l8-8 7 13 6-3-7-13 11-1Z"/></svg>
+            <div class="pad-overlay" id="pad-overlay"><span class="chip-light">PRACTICE ONLY</span><strong id="pad-overlay-text">Start with step 1: say “watch me”.</strong></div>
+          </div>
+          <div class="pad-side">
+            <ol class="pad-progress" id="pad-progress" aria-label="Practice progress">
+              <li data-step="1" aria-current="step">Watch me</li><li data-step="2">Open hand</li><li data-step="3">Point and pinch</li><li data-step="4">Clap to stop</li>
+            </ol>
+            <div class="pad-hand" id="pad-hand-box">
+              <svg viewBox="0 0 200 240" role="img" aria-labelledby="pad-hand-title" id="pad-hand-svg"><title id="pad-hand-title">Practice hand: waiting</title>
+                <rect x="6" y="4" width="188" height="232" rx="16" fill="none" stroke="#5f7f6c" stroke-width="2" stroke-dasharray="8 8"/>
+                <g class="pad-one" id="pad-one"><use id="pad-hand-use" href="#g-hand-open" x="20" y="10" width="160" height="192"/><use class="pad-mark" href="#g-index-mark" x="20" y="10" width="160" height="192"/></g>
+                <g class="pad-clap" id="pad-clap"><g class="clap-l"><g transform="translate(124 60) scale(-1 1)"><use href="#g-hand-open" width="90" height="108"/></g></g><g class="clap-r"><use href="#g-hand-open" x="76" y="60" width="90" height="108"/></g></g>
+              </svg>
+              <span class="pad-hand-label" id="pad-hand-label" aria-hidden="true">Camera off</span>
+            </div>
+            <div class="pad-buttons">
+              <button type="button" data-pad="watch">1. Say “watch me”</button>
+              <button type="button" data-pad="open">2. Show open hand</button>
+              <button type="button" data-pad="left">Pinch thumb + middle</button>
+              <button type="button" data-pad="right">Pinch thumb + ring</button>
+              <button type="button" data-pad="clap">4. Clap to stop</button>
+              <button type="button" data-pad="esc"><kbd>Esc</kbd> Emergency stop</button>
+            </div>
+            <div class="pad-guard"><span>Presence guard <small>(separate switch)</small></span><button type="button" id="pad-guard" aria-pressed="false">Not armed</button></div>
+          </div>
+        </div>
+        <p class="pad-status" id="pad-status" role="status" aria-live="polite">Press “Say watch me” to begin. The practice pad does not use a camera or microphone.</p>
+      </div>
+    </section>
+
+    <section class="needs section wrap" id="needs" aria-labelledby="needs-title">
+      <div class="section-intro"><p class="eyebrow">WHAT YOUR COMPUTER NEEDS</p><h2 id="needs-title">Four pieces.<br>In plain words.</h2><p>Hand control is built from a few free parts. The setup guide checks each one and shows what is missing, so nothing is left as a guess. If a piece is missing, hand control stays off and you can still use the practice pad.</p><a class="button" href="setup.html">Check my computer’s list ↗</a></div>
+      <ol class="stack">
+        <li><span class="stack-no">4</span><div><h3>A quick camera check</h3><p>Sit about an arm’s length away. Face the light rather than a window. Show an open hand and practice before you let it move the real cursor.</p></div></li>
+        <li><span class="stack-no">3</span><div><h3>The hand model</h3><p>A small file that knows what a hand looks like. You download it once, as its own step. Jarvis checks it is the expected file, and it runs on your computer.</p></div></li>
+        <li><span class="stack-no">2</span><div><h3>Optional add-on packages</h3><p>Free add-ons for the features you pick: a camera reader and a hand finder for hand control, a listener for offline voice. Skip a feature and you skip its add-ons.</p></div></li>
+        <li><span class="stack-no">1</span><div><h3>Python</h3><p>The free engine Jarvis runs on. Version 3.11 or newer. If it is missing, the launcher says so and tells you where to get it.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="how section wrap" id="how"><div class="section-intro"><p class="eyebrow">NO NEED TO KNOW ALL THE TOOLS</p><h2>Start with your day.<br>We’ll help with the setup.</h2><p>You can go back, change your mind, or stop. Choosing a feature never silently turns on a device.</p></div><ol class="steps"><li><span>01</span><h3>Tell it what helps</h3><p>Desk privacy, hands-free pointing, studying, development, or a mix of your own.</p></li><li><span>02</span><h3>Set your ceiling</h3><p>Choose a monthly allowance and the tools you already have. Start with the free local features.</p></li><li><span>03</span><h3>Check, practice, enable</h3><p>See what is missing, follow the next step, and practice before enabling real controls.</p></li></ol></section>
+
+    <section class="devices section wrap" aria-labelledby="devices-title">
+      <div class="section-heading"><div><p class="eyebrow">WHERE EACH PART RUNS</p><h2 id="devices-title">Plan it on your phone.<br>Run it at your desk.</h2></div><a class="button primary" href="setup.html">Start my plan ↗</a></div>
+      <div class="device-grid">
+        <figure class="device-card phone-card">
+          <svg viewBox="0 0 160 220" role="img" aria-labelledby="dv1-t dv1-d"><title id="dv1-t">Phone</title><desc id="dv1-d">A phone showing a setup checklist with three ticked items.</desc>
+            <rect x="34" y="8" width="92" height="196" rx="16" fill="#fffdfa" stroke="#234f3c" stroke-width="3.5"/><rect x="66" y="16" width="28" height="6" rx="3" fill="#234f3c"/>
+            <rect x="46" y="38" width="50" height="8" rx="4" fill="#234f3c"/>
+            <g fill="#c6f0b3" stroke="#234f3c" stroke-width="2"><rect x="46" y="62" width="14" height="14" rx="4"/><rect x="46" y="90" width="14" height="14" rx="4"/><rect x="46" y="118" width="14" height="14" rx="4"/></g>
+            <path d="M49 69l3 3 5-6M49 97l3 3 5-6M49 125l3 3 5-6" fill="none" stroke="#234f3c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <g fill="#c4cdb9"><rect x="66" y="66" width="46" height="6" rx="3"/><rect x="66" y="94" width="38" height="6" rx="3"/><rect x="66" y="122" width="42" height="6" rx="3"/></g>
+            <rect x="46" y="166" width="68" height="20" rx="6" fill="#234f3c"/><rect x="58" y="173" width="44" height="6" rx="3" fill="#c6f0b3"/>
+          </svg>
+          <figcaption><h3>On your phone</h3><ul><li class="yes">Choose what helps you</li><li class="yes">Set a monthly limit</li><li class="yes">Read your step list</li><li class="no">No hand control or screen lock</li></ul></figcaption>
+        </figure>
+        <figure class="device-card pc-card">
+          <svg viewBox="0 0 260 220" role="img" aria-labelledby="dv2-t dv2-d"><title id="dv2-t">Windows computer</title><desc id="dv2-d">A desktop computer with a webcam. Its screen shows three switches: hand control, presence guard, and offline voice.</desc>
+            <rect x="20" y="22" width="220" height="140" rx="12" fill="#162722"/><rect x="30" y="32" width="200" height="120" rx="6" fill="#fffdfa"/><rect x="118" y="12" width="24" height="10" rx="5" fill="#162722"/><circle cx="130" cy="17" r="2.5" fill="#c6f0b3"/>
+            <path d="M112 162h36l6 34h-48Z" fill="#d6ddd4" stroke="#162722" stroke-width="3" stroke-linejoin="round"/><path d="M86 200h88" stroke="#162722" stroke-width="3.5" stroke-linecap="round"/>
+            <g font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" font-weight="600" fill="#162722"><text x="44" y="62">Hand control</text><text x="44" y="98">Presence guard</text><text x="44" y="134">Offline voice</text></g>
+            <g stroke="#234f3c" stroke-width="2"><rect x="176" y="50" width="38" height="18" rx="9" fill="#e9ede3"/><rect x="176" y="86" width="38" height="18" rx="9" fill="#e9ede3"/><rect x="176" y="122" width="38" height="18" rx="9" fill="#e9ede3"/></g>
+            <g fill="#234f3c"><circle cx="186" cy="59" r="6"/><circle cx="186" cy="95" r="6"/><circle cx="186" cy="131" r="6"/></g>
+          </svg>
+          <figcaption><h3>On your Windows computer</h3><ul><li class="yes">Runs Jarvis and its dashboard</li><li class="yes">Hand control and screen lock</li><li class="yes">Offline voice, if you add it</li><li class="no">Each switch starts off</li></ul></figcaption>
+        </figure>
+      </div>
+      <p class="devices-note">A phone remote control is not included. Hand mouse control and Windows locking need the desktop app.</p>
+    </section>
+
+    <section class="included section" id="included"><div class="wrap"><div class="section-heading"><div><p class="eyebrow">PRACTICAL, NOT MYSTERIOUS</p><h2>A few things done with care.</h2></div><a class="text-link" href="https://github.com/Jgolding1998/jarvis-workbench#what-is-implemented" target="_blank" rel="noopener noreferrer">Read the capability notes ↗</a></div><div class="feature-grid"><article><span class="feature-icon">↖</span><span class="feature-tag">HAND CONTROL</span><h3>“Watch me.”<br>Then use your hands.</h3><p>A local hand tracker maps your index finger and pinches to the pointer. A visual clap stops hand control. Esc is an independent stop.</p><p class="feature-note">Optional camera and hand model. Windows desktop. Test it on your own hardware first.</p></article><article><span class="feature-icon">◉</span><span class="feature-tag">PRESENCE GUARD</span><h3>Step away.<br>Have a clear policy.</h3><p>An explicitly armed guard can request a Windows lock after an absence. Camera faults have their own visible state.</p><p class="feature-note">A supplementary guard. Keep Windows auto-lock on.</p></article><article><span class="feature-icon">⌁</span><span class="feature-tag">OFFLINE COMMANDS</span><h3>Speak a command.<br>Keep it local.</h3><p>Use the optional offline voice adapter for supported commands, or use typed controls. Missing voice tools never trigger a cloud fallback.</p><p class="feature-note">Optional microphone and local language model.</p></article></div></div></section>
+
+    <section class="budget section wrap"><div><p class="eyebrow">YOUR ALLOWANCE IS A LIMIT, NOT A TARGET</p><h2>Keep the useful parts.<br>Skip the extra bills.</h2><p>The core desktop features don’t need a paid AI subscription. The guide adds up the numbers you enter with plain arithmetic. It is not an AI, and it checks what you already own before suggesting anything.</p><p>Cloud AI and paid voice entries are planning notes. Jarvis does not connect to them yet.</p><a class="button" href="setup.html">Choose my tools ↗</a></div><div class="budget-receipt"><div class="receipt-top"><span>YOUR STARTING POINT</span><span>LOCAL</span></div><dl><div><dt>Jarvis core software</dt><dd>$0<span>/mo</span></dd></div><div><dt>Paid AI required for hand control</dt><dd>No</dd></div><div><dt>How the plan is worked out</dt><dd>Simple math</dd></div><div><dt>Cloud AI connectors</dt><dd>Planned only</dd></div><div><dt>Automatic purchases</dt><dd>None</dd></div></dl><p>Hardware, electricity, and any services you later choose are separate. Cloud API costs depend on usage. Some subscriptions offer eligible API credits that require activation.</p><span class="receipt-foot">PLAN FIRST. ENABLE SECOND.</span></div></section>
+
+    <section class="faq section wrap"><div><p class="eyebrow">BEFORE YOU BEGIN</p><h2>A few straight answers.</h2></div><div><details><summary>Does this page install anything?</summary><p>No. It helps you choose a setup and download a plan. The desktop package runs separately on your computer. Its launcher needs Python 3.11 or later and tells you where to get it if it is missing.</p></details><details><summary>Does my camera footage leave the computer?</summary><p>The desktop hand and presence adapters process frames locally. This website never asks for camera access, and the practice pad does not use a camera. Model and package downloads are separate setup steps.</p></details><details><summary>What if I clap while the presence guard is on?</summary><p>Only hand control stops. The presence guard is armed and disarmed with its own switch, so a clap never turns it off.</p></details><details><summary>Can I connect the AI tools I already pay for?</summary><p>The guide records the tools you already use and explains current setup requirements. Cloud AI and paid voice entries are planning guidance, not implemented Jarvis connectors. It never asks you to paste an API key here.</p></details><details><summary>Is it ready to control my computer immediately?</summary><p>Start with the practice pad. Install and check the optional pieces, do the camera check, then explicitly enable live actions on your computer. Camera accuracy and the physical stops need testing on your own hardware.</p></details></div></section>
+    <section class="final-cta wrap"><p class="eyebrow">MAKE IT FIT YOU</p><h2>Your setup.<br>Your pace.</h2><a class="button primary" href="setup.html">Build my Jarvis setup ↗</a></section>
+  </main><footer class="wrap"><a class="brand" href="index.html"><span class="brand-mark">J</span><span>jarvis<span class="brand-light">workbench</span></span></a><p>An independent experimental desktop project.</p><div><a href="privacy.html">Privacy</a><a href="https://github.com/Jgolding1998/jarvis-workbench" target="_blank" rel="noopener noreferrer">Source &amp; tests ↗</a></div></footer>
+</body></html>

@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "checked_on": "2026-10-28",
+  "currency": "USD",
+  "purpose": "A deterministic setup guide. This catalog does not connect, bill, or provision provider accounts.",
+  "budget_note": "Your monthly amount is a ceiling, not a promise of a fixed bill. Core Jarvis features do not need a paid AI plan. Hardware, internet, and electricity are separate.",
+  "providers": [
+    {
+      "id": "jarvis-core",
+      "name": "Jarvis local features",
+      "category": "core",
+      "implementation": "included",
+      "monthly_software_usd": 0,
+      "description": "Dashboard, simulated practice, local presence policy, optional Windows actions, and explicit permission controls.",
+      "requires": ["Python 3.11 or later", "A computer for desktop features"],
+      "source_url": "https://github.com/Jgolding1998/jarvis-workbench"
+    },
+    {
+      "id": "vosk",
+      "name": "Vosk offline command listening",
+      "category": "speech-recognition",
+      "implementation": "optional-local-adapter",
+      "monthly_software_usd": 0,
+      "description": "Recognizes supported command phrases on your computer after installing the optional packages and a local language model. It is not a speaking voice.",
+      "requires": ["Microphone", "Optional voice packages", "A local Vosk model"],
+      "model_example": "vosk-model-small-en-us-0.15",
+      "model_download_mb": 40,
+      "model_license": "Apache-2.0",
+      "source_url": "https://alphacephei.com/vosk/models",
+      "setup_url": "https://alphacephei.com/vosk/install"
+    },
+    {
+      "id": "local-browser-voice",
+      "name": "A local voice already on your device",
+      "category": "setup-read-aloud",
+      "implementation": "browser-dependent",
+      "monthly_software_usd": 0,
+      "description": "Optional spoken setup guidance can use a browser voice marked as local. Availability depends on your browser and operating system. Text guidance always remains available.",
+      "requires": ["A browser with an installed local speech voice"],
+      "source_url": "https://developer.mozilla.org/en-US/docs/Web/API/SpeechSynthesisVoice/localService"
+    },
+    {
+      "id": "ollama-local",
+      "name": "Ollama with a local model",
+      "category": "ai-planning",
+      "implementation": "guide-only",
+      "monthly_software_usd": 0,
+      "description": "A possible future local AI component. Jarvis does not currently route questions to it. Model memory requirements vary. Ollama also offers cloud models, so a local address alone does not establish offline processing.",
+      "requires": ["Ollama", "A model suitable for your hardware", "Separate integration work"],
+      "source_url": "https://ollama.com/pricing",
+      "setup_url": "https://docs.ollama.com/quickstart"
+    },
+    {
+      "id": "openai-api",
+      "name": "OpenAI API",
+      "category": "ai-planning",
+      "implementation": "guide-only",
+      "monthly_software_usd": null,
+      "billing": "usage-based",
+      "description": "Optional future cloud integration with usage-based charges. No API key is requested by this setup page and no OpenAI connection is implemented here.",
+      "credit_note": "Eligible ChatGPT Pro and Business subscribers can claim API credits by linking an API organization they own. Benefits require activation and eligibility checks; a chat subscription is not an automatic Jarvis connection.",
+      "requires": ["Your own API organization and project", "Your own billing or eligible credits", "Separate integration work"],
+      "source_url": "https://developers.openai.com/api/docs/pricing",
+      "credits_url": "https://developers.openai.com/api/docs/guides/chatgpt-api-credits"
+    },
+    {
+      "id": "anthropic-api",
+      "name": "Claude API",
+      "category": "ai-planning",
+      "implementation": "guide-only",
+      "monthly_software_usd": null,
+      "billing": "usage-based",
+      "description": "Optional future cloud integration using your own Claude Console access. This page does not collect a key or connect Jarvis to the API.",
+      "credit_note": "Claude subscription and Console access are separate. Some Max and Team plans include monthly API credits; check and activate your current benefit in the provider console.",
+      "requires": ["Your own Claude Console account", "Your own billing or eligible credits", "Separate integration work"],
+      "source_url": "https://docs.claude.com/en/docs/about-claude/pricing",
+      "credits_url": "https://support.claude.com/en/articles/9876003-i-have-a-paid-claude-subscription-pro-max-team-or-enterprise-plans-why-is-claude-api-usage-billed-separately-from-my-paid-claude-plan"
+    },
+    {
+      "id": "elevenlabs",
+      "name": "ElevenLabs API voice",
+      "category": "speech-planning",
+      "implementation": "guide-only",
+      "monthly_software_usd": null,
+      "billing": "usage-based",
+      "description": "Optional future generated speech. Jarvis does not currently send text or audio to ElevenLabs. Voice choice and estimated monthly use affect cost.",
+      "example_rate": {"model": "v4 Turbo", "usd_per_1000_characters": 0.04},
+      "requires": ["Your own API account", "Separate integration work", "Review of the provider's current terms"],
+      "source_url": "https://elevenlabs.io/pricing/api"
+    }
+  ],
+  "defaults": {
+    "recommended_core_recurring_usd": 0,
+    "paid_services_required": false,
+    "cloud_fallback": false,
+    "collect_api_keys": false,
+    "auto_enable_devices": false,
+    "auto_enable_desktop_actions": false
+  }
+}

@@ -1,78 +1,97 @@
 # Build your own dashboard
 
-## 1. Start from a clean environment
+## 1. Try the safe demo
 
-Install 64-bit Python 3.11 or newer. The dependency-free demo and automated suite were exercised with Python 3.12. Optional hardware packages depend on available wheels for your Python version and architecture.
+Install [Python 3.11 or newer](https://www.python.org/downloads/), unzip Jarvis, and double-click **Start-Jarvis.cmd** on Windows. If Python is missing, the window explains what to install. On macOS or Linux, run `python3 -m jarvis.launcher` from the unzipped folder.
+
+The launcher opens the setup wizard without using the camera, microphone, mouse, or Windows actions. Try the simulator before installing optional tools. A saved plan never arms anything.
+
+## 2. Install only the tools you want
+
+On Windows, double-click **Install-Optional-Tools.cmd**:
+
+| Menu | Adds |
+| --- | --- |
+| 1. Camera | OpenCV for the presence guard |
+| 2. Camera + hand gestures | MediaPipe, OpenCV, and a checksum-verified hand model |
+| 3. Offline voice | Vosk and sounddevice; download the voice model separately |
+| 4. All optional tools | All of the above |
+| Q. Cancel | Changes nothing |
+
+Read the package list, then enter `y` to confirm. Installation uses this project's `.venv` directory. It downloads packages from PyPI and, for hand control, the fixed official Google model. It never opens devices. Existing environments and model files are preserved when setup cannot safely continue.
+
+Reopen **Start-Jarvis.cmd** after installation. It prefers `.venv` automatically and returns to the safe wizard. Live features use the separate command shown in your plan.
+
+On macOS or Linux, use the same menu with `python3 -m jarvis.install_tools`. This creates `.venv` too; portable live commands start with `./.venv/bin/python`. Windows examples below use the project's `.venv` interpreter directly.
+
+## 3. Calibrate the presence camera
+
+After installing Camera, open a terminal in the Jarvis folder:
+
+```powershell
+.\.venv\Scripts\python.exe -m jarvis.server --camera
+```
+
+Open the printed address, normally **http://127.0.0.1:8765**, and type `active`. Actions remain disarmed. Use `--camera-index 1` for a second webcam, or `--port 8877` if the default port is busy.
+
+The HOG detector needs substantial body framing. A tight seated head-and-shoulders view may not work reliably. Test one person, an empty view, a second person, occlusion, and a disconnected camera before arming any action. The absence timer starts only after a person has been observed. No identity recognition is performed and no frames are saved or uploaded.
+
+## 4. Add offline voice
+
+Choose **Offline voice** or **All optional tools** in the installer. Voice setup builds the pinned, checksum-verified `srt` dependency from its official source archive; the other dependencies use wheels. The installer accepts only that reviewed source archive.
+
+Then download a small English model from the [Vosk model catalog](https://alphacephei.com/vosk/models), read its license, and unzip its contents into `models/voice-en`. Check that these paths exist:
+
+```text
+models/voice-en/conf/model.conf
+models/voice-en/am/
+```
+
+The installer deliberately leaves voice model selection and extraction to you. Do not leave an extra versioned folder between `voice-en` and `conf`.
+
+```powershell
+.\.venv\Scripts\python.exe -m jarvis.server --camera --voice-model models/voice-en
+```
+
+The microphone listens locally for `active`. With hand control enabled, separately armed voice can also recognize `watch me`. Voice cannot arm desktop actions or disarm the presence guard. Nearby speech can cause false activation; speaker authentication is not claimed.
+
+## 5. Permit an optional desktop action
+
+For a Windows privacy lock:
+
+```powershell
+.\.venv\Scripts\python.exe -m jarvis.server --camera --allow-lock
+```
+
+Select **Privacy lock**, apply the permission, then activate. The policy requests a lock after an established person is absent for more than 30 seconds, two people remain visible for at least two seconds, or observations are stale for more than five seconds. Keep Windows automatic lock enabled. The API is asynchronous, so manually verify the actual lock on your hardware.
+
+For the synthetic workbook demonstration:
+
+```powershell
+.\.venv\Scripts\python.exe -m jarvis.server --camera --allow-spreadsheet
+```
+
+Select **Boss Alert** instead of privacy lock. It writes `runtime/Boss Alert.xlsx` with demonstration data and opens the registered spreadsheet application. It contains no macros, formulas, external links, or business data. This mode does not protect an unattended workstation.
+
+## 6. Try hand control
+
+Choose installer option **2** or **4**, then follow the [hand control guide](HAND_CONTROL.md). Practice uses a virtual cursor. Live `watch me` uses the verified local model, with real pointer movement off until separately permitted. A visual clap or Esc stops hands only.
+
+The camera has one owner. Stop a mode explicitly and wait for its camera to close before starting the other. If a driver cannot release the camera, restart Jarvis.
+
+## Manual installation alternative
+
+Advanced users can create an environment and install the reviewed files directly:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m jarvis.server --demo
+.\.venv\Scripts\python.exe -m pip install -r requirements-camera.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-hand.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-voice.txt
 ```
 
-Open **http://127.0.0.1:8765**. Keep that exact address: the local server checks its Host header. If the port is busy, add `--port 8877` and use the address printed by the application.
+Install only the files needed for your features. For hand control, the manual route also needs the model and checksum in the hand guide. Use contrib OpenCV consistently; do not combine it with the separate `opencv-python` distribution. On macOS or Linux, replace `python` with `python3` when creating the environment and use `./.venv/bin/python` afterwards.
 
-Use the simulator before connecting hardware. Typing `active` and applying an action permission are separate steps. The first step enables evaluation; the second authorizes a specific allowlisted desktop effect. Neither a command nor a model can run arbitrary programs.
+## Extend carefully
 
-## 2. Add a local camera, with actions disabled
-
-```powershell
-python -m pip install -r requirements-camera.txt
-python -m jarvis.server --camera
-```
-
-Type `active`. The camera opens only while the guard is active. It releases the camera after the guard stops. Frame processing stays in the Python process and only a person-count estimate reaches the dashboard.
-
-Use `--camera-index 1` if your chosen webcam is the second device. HOG is a simple bundled detector, not a modern face or identity model. Arrange the camera so people are visible with substantial body framing. Test a single person, an empty view, two people, partial occlusion, and a disconnected camera. A tight seated webcam crop may not work reliably.
-
-The absence timer becomes meaningful only after at least one person has been observed. If the interface remains at **Waiting to establish your presence**, improve the camera framing before arming anything. The policy cannot know whether the person in view is you.
-
-No frames are saved. Do not point the camera at people who have not agreed to the demonstration.
-
-## 3. Add offline voice activation
-
-Install the optional voice packages:
-
-```powershell
-python -m pip install -r requirements-voice.txt
-```
-
-Download a language model directly from the [Vosk model catalog](https://alphacephei.com/vosk/models), read its license, verify the download with any checksum supplied by its publisher, and unpack it into a local directory such as `models/voice-en`. Model files are intentionally ignored by Git and are not distributed here.
-
-```powershell
-python -m jarvis.server --camera --voice-model .\models\voice-en
-```
-
-The microphone now listens locally for **active**. Voice can start observation; voice cannot arm actions or disarm the guard. Use the dashboard's **Stop and disarm** button to stop it. Microphone and camera access are explicit launch choices, and both are disabled in the default demo.
-
-Nearby speech or audio playback can cause false activation. No speaker authentication is claimed. An activation after a stop starts observation with desktop actions still disarmed.
-
-## 4. Permit a real Windows lock
-
-Save your work and confirm Windows auto-lock is enabled before your own manual hardware test. This command permits the UI to arm locking; the command alone does not arm it:
-
-```powershell
-python -m jarvis.server --camera --allow-lock
-```
-
-In the dashboard, select **Privacy lock** and apply the permission, then activate. Optional voice works with the same command if you add `--voice-model`.
-
-The policy requests a Windows lock when an established person is absent for **more than 30 seconds**, two or more people remain visible for **at least two seconds**, or camera observations are missing for **more than five seconds**. A camera fault is shown as a fault, not as an empty room.
-
-Windows must allow the process to interact with the current desktop. The API request is asynchronous, so manually verify that the computer locks. This project does not query the Windows session to confirm the lock. An action failure appears in the local activity list. Use the operating system's own automatic lock for dependable enforcement.
-
-## 5. Try the optional synthetic workbook action
-
-```powershell
-python -m jarvis.server --camera --allow-spreadsheet
-```
-
-Select **Boss Alert** and apply the permission. A sustained additional-person count creates `runtime/Boss Alert.xlsx` with three rows of demonstration data, then opens it with the Windows file association. Excel or a compatible registered spreadsheet application is required. It contains no macros, formulas, external links, personal information, or business data.
-
-The workbook action and privacy lock are mutually exclusive in the dashboard. The workbook mode does not protect an unattended workstation; choose privacy lock for that purpose. A repeated crowd observation will not reopen the workbook until the view has contained fewer than two people continuously for five seconds.
-
-## 6. Extend the assistant without widening its authority
-
-`Presence` only emits named events. `Actions` implements the allowlist. `Service` serializes state changes. A future local AI assistant can suggest a supported typed command, but should not bypass arming, execute shell text, or receive camera frames by default. Keep credentials in your own secret store and add tests for every new action boundary.
-
-The build here is complete for the listed features. Weather, email, browser automation, general chat, language model reasoning, and the original assistant's private tools are not included.
+`Presence` emits named events, `Actions` implements the allowlist, and `Service` manages local permissions. New integrations must preserve those boundaries. Weather, email, browser automation, general chat, voice hold/scroll/double-click commands, and the original assistant's private tools are not included.

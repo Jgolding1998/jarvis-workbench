@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="jarvis-mode" content="auto">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta name="description" content="Plan a free, local Jarvis setup in a few questions. No account or API key needed.">
+<title>Get Jarvis: setup</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="setup.css">
+<script src="setup.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="brand"><span class="mark" aria-hidden="true">J</span><span>JARVIS SETUP</span></div>
+    <div class="top-right"><span id="speak-note" class="speak-note" role="status"></span><button id="speak" class="ghost small" type="button" data-action="speak" hidden>Read aloud</button><span id="mode-badge" class="badge">LOADING</span></div>
+  </header>
+  <nav class="progress" aria-label="Setup progress"><ol id="progress"></ol></nav>
+  <main id="wizard" tabindex="-1">
+    <noscript><p class="card">This setup page needs JavaScript. You can also follow the written guide in docs/BUILD_YOUR_OWN.md.</p></noscript>
+
+    <section class="step" data-step="welcome" hidden>
+      <p class="eyebrow">STEP 1</p>
+      <h1>Set up your Jarvis?</h1>
+      <p class="lead">Choose a setup for your computer, even if you are planning on your phone. Start with a safe practice mode, then add the controls you want. This guide makes a plan and does not install anything by itself.</p>
+      <ul class="facts">
+        <li><b>$0 by default.</b> No account, subscription, or API key.</li>
+        <li><b>Nothing turns on by itself.</b> Camera, microphone, mouse, and Windows actions each need your explicit choice.</li>
+        <li><b>Honest status.</b> Every step says whether it is done for you, done by you, or not built yet.</li>
+      </ul>
+      <div class="actions">
+        <button class="primary" type="button" data-action="install-yes">Yes, plan my setup</button>
+        <button class="ghost" type="button" data-action="install-no">No thanks</button>
+      </div>
+    </section>
+
+    <section class="step" data-step="declined" hidden>
+      <p class="eyebrow">ALL DONE</p>
+      <h1>No problem.</h1>
+      <p class="lead">Nothing was installed or changed. You can close this page.</p>
+      <p id="exit-note" class="note" role="status"></p>
+      <div class="actions">
+        <button id="exit-local" class="primary" type="button" data-action="exit" hidden>Stop Jarvis and close</button>
+        <button class="ghost" type="button" data-action="restart">Start over</button>
+      </div>
+    </section>
+
+    <section class="step" data-step="purpose" hidden>
+      <p class="eyebrow">STEP 2</p>
+      <h1>What will you use it for?</h1>
+      <p class="lead">Pick the closest match. You can fine-tune every feature later.</p>
+      <div id="presets" class="grid" role="radiogroup" aria-label="Use"></div>
+      <fieldset id="custom-features" class="card" hidden><legend>Choose features</legend><div id="custom-list"></div></fieldset>
+      <div class="actions"><button class="ghost" type="button" data-action="back">Back</button><button class="primary" type="button" data-action="next">Continue</button></div>
+    </section>
+
+    <section class="step" data-step="budget" hidden>
+      <p class="eyebrow">STEP 3</p>
+      <h1>What is the most you would spend each month?</h1>
+      <p class="lead">This is a ceiling, not a target. Jarvis itself costs $0, and this guide never suggests spending money just because your ceiling allows it.</p>
+      <div class="card budget">
+        <label for="budget-range">Monthly ceiling in US dollars</label>
+        <div class="budget-row">
+          <input id="budget-range" type="range" min="0" max="500" step="5" value="0">
+          <span class="money">$<input id="budget-number" type="number" min="0" max="500" step="1" value="0" inputmode="decimal" aria-label="Monthly ceiling in US dollars"></span>
+        </div>
+        <p class="note">Prices from other companies change. This guide links to their official pages instead of quoting prices.</p>
+      </div>
+      <div class="actions"><button class="ghost" type="button" data-action="back">Back</button><button class="primary" type="button" data-action="next">Continue</button></div>
+    </section>
+
+    <section class="step" data-step="tools" hidden>
+      <p class="eyebrow">STEP 4</p>
+      <h1>Do you already use an AI tool?</h1>
+      <p class="lead">Jarvis does not need one and does not connect to any. Your answer only tailors the advice.</p>
+      <div class="card">
+        <label for="ai-tool">AI tool you use today</label>
+        <select id="ai-tool"></select>
+        <p id="ai-guidance" class="note"></p>
+        <p class="tag guidance">GUIDANCE ONLY. NO CONNECTOR. NO API KEY REQUESTED.</p>
+      </div>
+      <div class="actions"><button class="ghost" type="button" data-action="back">Back</button><button class="primary" type="button" data-action="next">Continue</button></div>
+    </section>
+
+    <section class="step" data-step="voice" hidden>
+      <p class="eyebrow">STEP 5</p>
+      <h1>How do you want to use your voice?</h1>
+      <p class="lead">Offline voice is the only voice feature built into Jarvis. The others are advice about tools you may already have.</p>
+      <div id="voice-options" class="grid" role="radiogroup" aria-label="Voice"></div>
+      <div class="actions"><button class="ghost" type="button" data-action="back">Back</button><button class="primary" type="button" data-action="next">Continue</button></div>
+    </section>
+
+    <section class="step" data-step="device" hidden>
+      <p class="eyebrow">STEP 6</p>
+      <h1>Which computer will run Jarvis?</h1>
+      <p class="lead">Used only to decide what will actually work. <span id="device-detected"></span></p>
+      <div class="card form-grid">
+        <label for="device-os">Operating system</label><select id="device-os"></select>
+        <label for="device-ram">Memory (RAM)</label><select id="device-ram"></select>
+        <span class="label">Camera</span><div class="toggle-row" id="device-camera"></div>
+        <span class="label">Microphone</span><div class="toggle-row" id="device-microphone"></div>
+      </div>
+      <div class="actions"><button class="ghost" type="button" data-action="back">Back</button><button class="primary" type="button" data-action="next">See my plan</button></div>
+    </section>
+
+    <section class="step" data-step="plan" hidden>
+      <p class="eyebrow">YOUR PLAN</p>
+      <h1>Here is your setup plan.</h1>
+      <p id="plan-summary" class="lead"></p>
+      <div class="plan-grid">
+        <section class="card">
+          <h2>Features</h2>
+          <p class="note">Switch features on or off. Unavailable ones say why.</p>
+          <ul id="plan-features" class="features"></ul>
+          <div class="prefs">
+            <label for="camera-index">Camera number <small>(0 is the usual webcam)</small></label>
+            <input id="camera-index" type="number" min="0" max="9" step="1" value="0">
+            <label class="check"><input id="hand-cursor" type="checkbox"> Let hand control move the real cursor (Windows, off by default)</label>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Cost</h2>
+          <p class="big"><span id="cost-jarvis">$0</span><small> per month for Jarvis</small></p>
+          <ul id="cost-notes" class="notes"></ul>
+          <h2>Your tools</h2>
+          <ul id="guidance" class="notes"></ul>
+          <div id="provider-info" hidden><h3>From the official catalog</h3><ul id="provider-list" class="notes"></ul></div>
+        </section>
+      </div>
+      <section class="card">
+        <h2>Remaining tasks</h2>
+        <p class="note"><span class="pill manual">YOU DO IT</span> <span class="pill automatic">JARVIS DOES IT</span> <span class="pill pending">NOT BUILT YET</span> <span class="pill done">DETECTED</span></p>
+        <ol id="tasks" class="tasks"></ol>
+      </section>
+      <section class="card">
+        <h2>Launch command</h2>
+        <div class="command"><code id="launch-command"></code><button class="ghost small" type="button" data-action="copy">Copy</button></div>
+        <p class="note">Starts with every action disarmed. You arm actions yourself in the dashboard.</p>
+      </section>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <div class="actions wrap">
+        <button class="ghost" type="button" data-action="back">Back</button>
+        <button class="ghost" type="button" data-action="download">Download plan (JSON)</button>
+        <label class="ghost button">Import plan<input id="import" type="file" accept="application/json,.json" hidden></label>
+        <a id="release-link" class="primary button" hidden>Download Jarvis</a>
+        <button id="apply" class="primary" type="button" data-action="apply" hidden>Apply and save preferences</button>
+        <a id="dashboard-link" class="ghost button" href="/" hidden>Open dashboard</a>
+        <button id="exit-plan" class="ghost" type="button" data-action="exit" hidden>Stop Jarvis</button>
+      </div>
+    </section>
+  </main>
+  <footer class="foot">Runs on your computer. This page sends nothing anywhere and never asks for passwords or API keys.</footer>
+</div>
+</body>
+</html>

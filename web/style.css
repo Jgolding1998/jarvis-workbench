@@ -581,3 +581,52 @@ html {
     transition:none;
   }
 }
+
+.hand-grid {
+  display:grid;
+  grid-template-columns:1.4fr 1fr;
+  gap:22px;
+}
+.pad {
+  position:relative;
+  height:190px;
+  border:1px dashed #355347;
+  border-radius:10px;
+  background:#0d1419;
+  display:grid;
+  place-items:center;
+  color:#6f858f;
+  font-size:12px;
+  margin-bottom:12px;
+  touch-action:none;
+}
+.pad.live {
+  border-style:solid;
+  border-color:#7bdcb7;
+  cursor:crosshair;
+}
+.virtual-cursor {
+  position:absolute;
+  width:14px;
+  height:14px;
+  margin:-7px 0 0 -7px;
+  border-radius:50%;
+  background:#a9efd5;
+  box-shadow:0 0 0 6px #a9efd533;
+  pointer-events:none;
+}
+#hand {
+  margin-top:22px;
+}
+#hand .stop {
+  width:100%;
+  margin-bottom:6px;
+}
+#hand .secondary {
+  margin-top:10px;
+}
+@media(max-width:900px) {
+  .hand-grid {
+    grid-template-columns:1fr;
+  }
+}

@@ -1,0 +1,423 @@
+{
+  "schema": "jarvis-setup-catalog/1",
+  "release": {
+    "download_url": "https://github.com/Jgolding1998/jarvis-workbench/releases/latest/download/Get-Jarvis-Workbench.zip",
+    "note": "Source ZIP for Windows, macOS, or Linux. It needs Python 3.11 or newer. It is not a standalone app."
+  },
+  "budget": {
+    "min": 0,
+    "max": 500,
+    "step": 5
+  },
+  "presets": [
+    {
+      "id": "developer",
+      "name": "Developer",
+      "goal": "Lock the screen when you step away from code, and optionally start the guard by voice.",
+      "features": [
+        "presence_guard",
+        "privacy_lock"
+      ]
+    },
+    {
+      "id": "office",
+      "name": "Office work",
+      "goal": "Protect an open-plan desk: lock when you leave, react when someone stands behind you.",
+      "features": [
+        "presence_guard",
+        "privacy_lock"
+      ]
+    },
+    {
+      "id": "study",
+      "name": "Study",
+      "goal": "Lock a laptop in a library or shared room if you walk off, with a simulator to learn the rules first.",
+      "features": [
+        "presence_guard",
+        "privacy_lock"
+      ]
+    },
+    {
+      "id": "creator",
+      "name": "Creator",
+      "goal": "Point with one hand, click with a pinch, and visually clap to stop hand control.",
+      "features": [
+        "hand_control"
+      ]
+    },
+    {
+      "id": "desk_privacy",
+      "name": "Desk privacy",
+      "goal": "The smallest setup: one camera, one rule, lock when the desk is empty or crowded.",
+      "features": [
+        "presence_guard",
+        "privacy_lock"
+      ]
+    },
+    {
+      "id": "custom",
+      "name": "Custom",
+      "goal": "Pick each feature yourself.",
+      "features": []
+    }
+  ],
+  "features": [
+    {
+      "id": "dashboard",
+      "name": "Local dashboard and typed commands",
+      "maturity": "implemented",
+      "always": true,
+      "selectable": false,
+      "summary": "Runs at 127.0.0.1 on this computer. Type active, inactive, or stop.",
+      "requires": {}
+    },
+    {
+      "id": "simulator",
+      "name": "Safe simulator",
+      "maturity": "implemented",
+      "always": true,
+      "selectable": false,
+      "summary": "Practice every rule with fake observations. No camera, microphone, or desktop action.",
+      "requires": {}
+    },
+    {
+      "id": "presence_guard",
+      "name": "Presence guard",
+      "maturity": "implemented",
+      "selectable": true,
+      "summary": "Counts people in a local camera view. Frames stay in memory. No identity recognition.",
+      "requires": {
+        "camera": true
+      },
+      "ram_caution": [
+        "lt4"
+      ]
+    },
+    {
+      "id": "privacy_lock",
+      "name": "Privacy lock",
+      "maturity": "implemented",
+      "selectable": true,
+      "summary": "Requests a Windows lock after more than 30 seconds away, two people for 2 seconds, or a camera fault.",
+      "requires": {
+        "os": [
+          "windows"
+        ],
+        "camera": true,
+        "depends": [
+          "presence_guard"
+        ]
+      }
+    },
+    {
+      "id": "boss_alert",
+      "name": "Boss Alert (playful demo)",
+      "maturity": "implemented",
+      "selectable": true,
+      "summary": "Opens a clearly labeled synthetic spreadsheet when a second person stays in view. Not a security feature.",
+      "requires": {
+        "os": [
+          "windows"
+        ],
+        "camera": true,
+        "depends": [
+          "presence_guard"
+        ]
+      }
+    },
+    {
+      "id": "hand_control",
+      "name": "Hand control (watch me, clap to stop)",
+      "maturity": "implemented",
+      "selectable": true,
+      "summary": "Optional local MediaPipe hand tracking: index pointer, middle/thumb left click, ring/thumb right click, visual two-hand clap to stop. Real pointer movement needs a separate permission.",
+      "requires": {
+        "camera": true,
+        "os": [
+          "windows"
+        ]
+      },
+      "ram_caution": [
+        "lt4"
+      ]
+    },
+    {
+      "id": "offline_voice",
+      "name": "Offline voice activation",
+      "maturity": "implemented",
+      "selectable": false,
+      "summary": "Vosk listens on this computer for the word active. Nothing is uploaded.",
+      "requires": {
+        "microphone": true,
+        "voice": [
+          "offline_vosk"
+        ]
+      }
+    }
+  ],
+  "ai_tools": [
+    {
+      "id": "none",
+      "name": "None",
+      "kind": "none",
+      "url": null,
+      "guidance": "Nothing to set up. Jarvis does not use a language model."
+    },
+    {
+      "id": "ollama",
+      "provider": "ollama-local",
+      "name": "Local Ollama",
+      "kind": "local",
+      "url": "https://ollama.com/download",
+      "guidance": "Free software that runs models on your own hardware. Jarvis has no Ollama connector; keep using it on its own.",
+      "ram_caution": [
+        "lt4",
+        "4to8",
+        "unknown"
+      ]
+    },
+    {
+      "id": "openai_api",
+      "provider": "openai-api",
+      "name": "OpenAI API",
+      "kind": "api",
+      "url": "https://openai.com/api/pricing/",
+      "guidance": "Jarvis has no OpenAI connector and never asks for an API key."
+    },
+    {
+      "id": "anthropic_api",
+      "provider": "anthropic-api",
+      "name": "Anthropic API",
+      "kind": "api",
+      "url": "https://www.anthropic.com/pricing",
+      "guidance": "Jarvis has no Anthropic connector and never asks for an API key."
+    },
+    {
+      "id": "chatgpt_subscription",
+      "provider": "openai-api",
+      "name": "ChatGPT subscription",
+      "kind": "subscription",
+      "url": "https://chatgpt.com/pricing",
+      "guidance": "Keep using ChatGPT in its own app. Jarvis does not connect to it."
+    },
+    {
+      "id": "claude_subscription",
+      "provider": "anthropic-api",
+      "name": "Claude subscription",
+      "kind": "subscription",
+      "url": "https://claude.com/pricing",
+      "guidance": "Keep using Claude in its own app. Jarvis does not connect to it."
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "kind": "other",
+      "url": null,
+      "guidance": "Jarvis does not connect to outside AI tools. Keep using yours on its own."
+    }
+  ],
+  "voice_options": [
+    {
+      "id": "offline_vosk",
+      "provider": "vosk",
+      "name": "Offline voice (Vosk)",
+      "kind": "implemented",
+      "url": "https://alphacephei.com/vosk/models",
+      "guidance": "Implemented. Listens locally for active. Needs a microphone, two Python packages, and a model you download."
+    },
+    {
+      "id": "platform_voice",
+      "name": "My computer's built-in voice tools",
+      "kind": "guidance",
+      "url": null,
+      "guidance": "Guidance only. Windows Voice Access, macOS Voice Control, and Linux tools work on their own. Jarvis does not integrate with them."
+    },
+    {
+      "id": "elevenlabs_existing",
+      "provider": "elevenlabs",
+      "name": "Existing ElevenLabs account",
+      "kind": "guidance",
+      "url": "https://elevenlabs.io/pricing",
+      "guidance": "Guidance only. Jarvis has no ElevenLabs connector and does not speak. Nothing is sent to ElevenLabs."
+    },
+    {
+      "id": "no_microphone",
+      "name": "No microphone",
+      "kind": "none",
+      "url": null,
+      "guidance": "Use typed commands. Everything works without a microphone."
+    }
+  ],
+  "os": [
+    {
+      "id": "windows",
+      "name": "Windows"
+    },
+    {
+      "id": "macos",
+      "name": "macOS"
+    },
+    {
+      "id": "linux",
+      "name": "Linux"
+    }
+  ],
+  "ram": [
+    {
+      "id": "lt4",
+      "name": "Less than 4 GB"
+    },
+    {
+      "id": "4to8",
+      "name": "4 to 8 GB"
+    },
+    {
+      "id": "8to16",
+      "name": "8 to 16 GB"
+    },
+    {
+      "id": "16plus",
+      "name": "16 GB or more"
+    },
+    {
+      "id": "unknown",
+      "name": "Not sure"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "python",
+      "kind": "manual",
+      "title": "Install Python 3.11 or newer",
+      "detail": "Use the official installer. On Windows, tick Add python.exe to PATH.",
+      "url": "https://www.python.org/downloads/",
+      "check": [
+        "python"
+      ]
+    },
+    {
+      "id": "download",
+      "kind": "manual",
+      "title": "Download the Jarvis source ZIP and unzip it",
+      "detail": "Unzip to a folder you own, such as Documents. Then double-click Start-Jarvis.cmd on Windows, or run python -m jarvis.launcher.",
+      "url": "release",
+      "check": [
+        "local"
+      ]
+    },
+    {
+      "id": "simulator",
+      "kind": "manual",
+      "title": "Try the simulator first",
+      "detail": "Start the safe demo and walk through away, back, and a second person. Nothing real happens.",
+      "command": "python -m jarvis.server --demo"
+    },
+    {
+      "id": "camera_packages",
+      "kind": "manual",
+      "title": "Install the camera package",
+      "detail": "Windows: double-click Install-Optional-Tools.cmd, choose 1: Camera, and confirm. On macOS or Linux, run python -m jarvis.install_tools and choose the same item. Packages go into this project's .venv; no device starts.",
+      "command": "python -m jarvis.install_tools",
+      "when_features": [
+        "presence_guard"
+      ],
+      "check": [
+        "cv2"
+      ]
+    },
+    {
+      "id": "voice_packages",
+      "kind": "manual",
+      "title": "Install the offline voice packages",
+      "detail": "Windows: double-click Install-Optional-Tools.cmd, choose 3: Offline voice, and confirm. On macOS or Linux, run python -m jarvis.install_tools and choose the same item. Packages go into this project's .venv; no device starts. Voice includes one checksum-verified source build.",
+      "command": "python -m jarvis.install_tools",
+      "when_features": [
+        "offline_voice"
+      ],
+      "check": [
+        "vosk",
+        "sounddevice"
+      ]
+    },
+    {
+      "id": "voice_model",
+      "kind": "manual",
+      "title": "Download a Vosk model into models/voice-en",
+      "detail": "After installing Offline voice, choose a small English Vosk model, read its license, and unzip it so models/voice-en/conf/model.conf and models/voice-en/am/ exist. The optional-tools installer does not download voice archives.",
+      "url": "https://alphacephei.com/vosk/models",
+      "when_features": [
+        "offline_voice"
+      ],
+      "check": [
+        "voice_model"
+      ]
+    },
+    {
+      "id": "autolock",
+      "kind": "manual",
+      "title": "Keep Windows automatic lock on",
+      "detail": "Jarvis is an extra guard, not a replacement. Check Settings, Accounts, Sign-in options.",
+      "when_features": [
+        "privacy_lock"
+      ]
+    },
+    {
+      "id": "spreadsheet_app",
+      "kind": "manual",
+      "title": "Confirm a spreadsheet app opens .xlsx files",
+      "detail": "Boss Alert opens a synthetic workbook with your default spreadsheet app.",
+      "when_features": [
+        "boss_alert"
+      ]
+    },
+    {
+      "id": "hand_practice",
+      "kind": "manual",
+      "title": "Practice hand control in the simulator",
+      "detail": "Use the practice pad on the dashboard. Clap stops hand control only. Real cursor movement stays off unless you turn it on.",
+      "when_features": [
+        "hand_control"
+      ]
+    },
+    {
+      "id": "hand_packages",
+      "kind": "manual",
+      "title": "Install the local hand tracking packages",
+      "detail": "Windows: double-click Install-Optional-Tools.cmd, choose 2: Camera + hand gestures, and confirm. On macOS or Linux, run python -m jarvis.install_tools and choose the same item. Packages go into this project's .venv; no device starts.",
+      "command": "python -m jarvis.install_tools",
+      "when_features": [
+        "hand_control"
+      ],
+      "check": [
+        "mediapipe",
+        "cv2"
+      ]
+    },
+    {
+      "id": "hand_model",
+      "kind": "manual",
+      "title": "Install and verify the hand model",
+      "detail": "Windows: Install-Optional-Tools.cmd option 2 or 4 downloads this official model into models/ and verifies its SHA-256. The portable optional-tools menu does the same. Use the link only for a manual download.",
+      "when_features": [
+        "hand_control"
+      ],
+      "url": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      "check": [
+        "hand_model"
+      ]
+    },
+    {
+      "id": "save",
+      "kind": "automatic",
+      "title": "Save your preferences",
+      "detail": "Local mode only, and only when you choose Apply. Writes runtime/setup-config.json. Nothing is armed."
+    },
+    {
+      "id": "launch",
+      "kind": "manual",
+      "title": "Launch Jarvis with your plan",
+      "detail": "Run this command from the unzipped Jarvis folder after completing the optional-tools menu. Hardware plans use the local .venv interpreter; simulator-only plans use Python. Actions stay disarmed until you arm them in the dashboard.",
+      "command": "launch"
+    }
+  ]
+}

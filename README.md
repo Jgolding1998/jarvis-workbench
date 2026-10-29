@@ -1,20 +1,80 @@
 # Jarvis Workbench
 
-A small Windows workstation assistant with a local dashboard, explicit action permissions, and a testable presence policy.
+A small local workstation assistant with a guided setup, explicit action permissions, and a testable presence policy. It runs on your own computer, costs $0, and needs no account or API key.
+
+[Guided setup and gesture practice](https://jarvis-workbench.jrgoldin.chatgpt.site) / [Download the Python source package](https://github.com/Jgolding1998/jarvis-workbench/releases/latest/download/Get-Jarvis-Workbench.zip)
 
 ![Safe demo dashboard](docs/dashboard.png)
 
-This is a clean portfolio edition rebuilt from a desktop assistant concept. It contains the dashboard and presence guard described here. It does not package the original assistant's accounts, private integrations, memory, browser profiles, or business tools.
+## Get started
 
-## Run the safe demo
+You need [Python 3.11 or newer](https://www.python.org/downloads/). The download is a source package that runs with Python, not a standalone app.
 
-Install [Python 3.11 or newer](https://www.python.org/downloads/), clone this repository, and open a terminal in its directory:
+**Windows:** unzip the download, then double-click **Start-Jarvis.cmd**. If Python is missing, the window shows the official download link and changes nothing.
 
-```powershell
+**macOS or Linux:** open a terminal in the unzipped folder and run:
+
+```
+python3 -m jarvis.launcher
+```
+
+The launcher starts Jarvis in safe demo mode and opens the setup wizard in your browser. The wizard asks:
+
+1. Whether you want to set up Jarvis at all. **No thanks** stops Jarvis and changes nothing.
+2. What you will use it for: Developer, Office work, Study, Creator, Desk privacy, or Custom.
+3. The most you would spend each month, from $0 to $500. This is a ceiling, not a target.
+4. Which AI tool you already use, if any.
+5. How you want to use your voice.
+6. Your operating system, camera, microphone, and memory.
+
+You then get a plan: which features will work on your computer and why others will not, the exact tasks left, which ones you do and which one Jarvis does, the launch command, and cost guidance. Choose **Apply and save preferences** to write `runtime/setup-config.json`. Saving or importing a plan never turns on the camera, microphone, mouse, or Windows actions.
+
+You can also download the plan as JSON and import it later. The same wizard works as a static web page with no local server; in that mode it only builds and downloads plans.
+
+## Add optional tools on Windows
+
+Double-click **Install-Optional-Tools.cmd**, choose a menu item, and confirm the downloads:
+
+1. **Camera** for the presence guard.
+2. **Camera + hand gestures** for `watch me`. This also downloads and verifies the official hand model.
+3. **Offline voice** for local recognition. A Vosk voice model is a separate manual download.
+4. **All optional tools** for all three.
+
+The tool uses this project's `.venv` folder. It installs packages and models without opening a camera, microphone, or mouse control. Then reopen **Start-Jarvis.cmd**, which uses that environment automatically. The launcher still opens a safe demo; your saved plan shows the separate command for live features. On macOS or Linux, use `python3 -m jarvis.install_tools` instead.
+
+For the voice model and live launch examples, follow the [setup guide](docs/BUILD_YOUR_OWN.md).
+
+## What works today
+
+| Feature | Status | Needs | Cost |
+| --- | --- | --- | --- |
+| Local dashboard and typed commands | Implemented | Python | $0 |
+| Safe simulator | Implemented | Python | $0 |
+| Presence guard (people count) | Implemented | Camera, OpenCV | $0 |
+| Privacy lock | Implemented | Windows, camera | $0 |
+| Boss Alert synthetic workbook (playful demo) | Implemented | Windows, camera, spreadsheet app | $0 |
+| Offline voice activation (Vosk) | Implemented | Microphone, voice packages, a downloaded model | $0 |
+| Hand control practice (virtual cursor, clap to stop) | Implemented | Python | $0 |
+| Local hand tracking with optional real cursor | Implemented, experimental | Windows, camera, hand packages and model | $0 |
+| Setup wizard read-aloud | Implemented, optional | A browser voice that runs on your device | $0 |
+| ChatGPT, Claude, OpenAI API, Anthropic API, Ollama | Guidance only, no connector | Your own account if you use them | Set by the provider |
+| ElevenLabs or your computer's built-in voice tools | Guidance only, no connector | Your own account or system settings | Set by the provider |
+
+Jarvis has no language model and never asks for an API key. The wizard is a deterministic planner: the same answers always give the same plan.
+
+## Planning costs
+
+Every implemented feature costs $0 per month. Your monthly amount in the wizard is a planning ceiling: a higher number never adds features or recommends a purchase. If you already pay for an AI subscription or API, it is billed by that provider and Jarvis does not use it. Some subscription plans include API credits or other benefits; check the provider's official page for your eligibility. If you use a paid API on its own, set a spending limit in the provider's console. Prices change, so the wizard links to official pricing pages instead of quoting them.
+
+## Use the dashboard
+
+After setup, start the safe demo at any time:
+
+```
 python -m jarvis.server --demo
 ```
 
-Open **http://127.0.0.1:8765**. No dependencies, account, API key, camera, or microphone are needed. The demo simulates desktop actions and does not create files.
+Open **http://127.0.0.1:8765**. The demo simulates desktop actions and does not create files.
 
 1. Type `active` and choose **Run command**.
 2. Choose **Privacy lock** and apply the permission.
@@ -23,43 +83,38 @@ Open **http://127.0.0.1:8765**. No dependencies, account, API key, camera, or mi
 5. Choose **Another person**. After two continuous seconds, the privacy action is simulated.
 6. Use **Stop and disarm** to stop evaluation and clear both action permissions.
 
-For the optional **Boss Alert** demo, select that action instead of privacy lock. Two people in view for two seconds produces a simulated workbook event. This is a playful synthetic-data demonstration, not identification of a boss or an attempt to hide activity.
+For **Boss Alert**, select that action instead of privacy lock. Two people in view for two seconds produces a simulated workbook event. This is a playful synthetic-data demonstration, not identification of a boss or an attempt to hide activity.
 
-## What is implemented
+### Hand control
 
-| Component | Behavior |
-| --- | --- |
-| Presence policy | Monotonic clock, explicit activation, absence timeout, extra-person debounce, stale-camera fault |
-| Dashboard | Local status, typed commands, separate action arming, simulator, bounded in-memory activity |
-| Windows actions | Direct `LockWorkStation` call; macro-free synthetic `.xlsx` opened with the registered desktop application |
-| Camera adapter | Optional local OpenCV HOG person detector; frames are not written or uploaded |
-| Voice adapter | Optional offline Vosk activation using the single command `active` |
-| HTTP boundary | Loopback binding, exact Host and Origin checks, per-process session token, bounded JSON, restrictive CSP |
+The **Hand control** panel has a practice pad. Start practice, move inside the pad to steer a virtual cursor, try left and right pinch, and use **Clap to stop**. Practice never moves the real cursor or opens the camera.
 
-No language model is part of the runtime. Anyone extending the project with AI must configure their own model or provider. An AI integration is a future extension, not a hidden dependency or a claimed feature.
+Typed `watch me` or `watchme` starts the local MediaPipe hand camera; `stop mouse` stops it. Follow the [hand control guide](docs/HAND_CONTROL.md) to install the optional packages and verified model, then launch with `--allow-hand-control`. Real pointer movement stays off until you enable its separate dashboard permission and start a hand session. Voice `watch me` also needs offline voice and its own dashboard opt-in.
+
+Clap, Esc, `stop mouse`, or **Stop hand control** stops hand control only. Hand stop never disarms presence permissions; an active presence guard keeps running during hand practice. The camera has one owner at a time: hand control and the presence guard cannot both use it, and starting one while the other runs gives a clear message instead of silently stopping either.
 
 ## Build your own
 
-The [setup guide](docs/BUILD_YOUR_OWN.md) covers a fresh environment, local voice models, observation-only camera calibration, and the separate flags that permit real actions. The [architecture](docs/ARCHITECTURE.md) explains the state transitions and threat boundary.
+The [setup guide](docs/BUILD_YOUR_OWN.md) covers a fresh environment, local voice models, observation-only camera calibration, and the separate flags that permit real actions. The [architecture](docs/ARCHITECTURE.md) explains state transitions and the security boundary.
 
 ## Test
 
-```powershell
+```
 python -m unittest discover -s tests -v
 ```
 
-The suite covers the exact 30-second boundary, re-entry, failed camera input, extra-person debounce, startup and stop behavior, invalid inputs, macro-free workbook contents, simulated action isolation, local session authorization, DNS rebinding, and cross-origin requests. It uses fake observations and never locks the test machine.
+The suite covers the presence policy timing, invalid inputs, workbook contents, simulated action isolation, local session authorization, DNS rebinding, and cross-origin requests. It also covers the setup wizard: answer validation, prototype-key and unknown-field rejection, budget limits, deterministic plans, identical results from the Python and browser planners (when Node.js is installed), atomic config saving, the local HTTP routes, the launcher's end-to-end apply and exit, the missing-Python message, hand control permissions, camera ownership, clap and Esc stops, and fake cursor output. Tests use fake observations and fake Windows calls; they never open a camera or microphone, move the cursor, or lock the machine.
 
-Camera accuracy, microphone recognition, a physical Windows lock, and opening Excel require manual checks on the target hardware. They were not exercised by the automated suite. A successful Windows API result means the lock request started, not proof the desktop is locked.
+Camera accuracy, microphone recognition, a physical Windows lock, opening Excel, and live hand tracking need manual checks on your own hardware. A successful Windows API result means the request started, not proof that it completed.
 
 ## Limits worth understanding
 
-OpenCV's bundled HOG detector expects visible people, usually with substantial body framing. A seated head-and-shoulders webcam view can be missed. Establish a reliable single-person observation before trusting the timer, then test observation-only behavior in your actual lighting. This edition does not recognize individuals or detect that a particular person left while someone else stayed.
+OpenCV's bundled HOG detector expects visible people, usually with substantial body framing. A seated head-and-shoulders webcam view can be missed. Establish a reliable single-person observation before trusting the timer. This edition does not recognize individuals.
 
 This is an experimental supplementary guard. Keep Windows auto-lock enabled. It does not unlock Windows, replace authentication, certify camera reliability, or run unattended at startup.
 
-If the camera cannot open or its reader fails, restart the process after resolving the device problem. Stop and active do not reopen a failed camera thread. An armed guard treats a first frame delayed more than five seconds as a camera fault and requests a lock.
+If the camera cannot open or its reader fails, restart the process after resolving the device problem. An armed guard treats a first frame delayed more than five seconds as a camera fault and requests a lock.
 
 ## References
 
-The implementation uses documented interfaces from [OpenCV](https://docs.opencv.org/4.x/d5/d33/structcv_1_1HOGDescriptor.html), [Vosk](https://alphacephei.com/vosk/install), and [Microsoft's LockWorkStation API](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation). Their software and models have their own licenses. No third-party assistant source, model weights, or account configuration is bundled.
+The implementation uses documented interfaces from [OpenCV](https://docs.opencv.org/4.x/d5/d33/structcv_1_1HOGDescriptor.html), [Vosk](https://alphacephei.com/vosk/install), and Microsoft's [LockWorkStation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation) and [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate) APIs. Their software and models have their own licenses. No third-party assistant source, model weights, or account configuration is bundled. This project is released under the [MIT License](LICENSE).
