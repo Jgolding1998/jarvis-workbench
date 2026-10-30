@@ -380,6 +380,29 @@ process.stdout.write(JSON.stringify(out));});"""
         self.assertFalse(out["throws"])
         self.assertEqual(out["after"], [])
 
+    def test_chat_limits_match_the_local_provider_client(self):
+        from jarvis import provider_client
+        script = STDIN + r"""
+const long='a'.repeat(api.REPLY_LIMIT);
+process.stdout.write(JSON.stringify({limits:[api.PROMPT_LIMIT,api.REPLY_LIMIT,api.SPEAK_LIMIT],
+  ok:[api.chatReply('hi'),api.chatReply(long)===long,api.chatReply('x'.repeat(5000)).length],
+  bad:[api.chatReply(long+'a'),api.chatReply('   '),api.chatReply(''),api.chatReply(5),api.chatReply(null),api.chatReply(['hi'])],
+  emoji:[api.chatReply(input.emoji)===input.emoji,api.chatReply(input.emoji+'\u{1F600}'),
+    api.speechText(input.emoji)==='\u{1F600}'.repeat(4000),api.speechText('a'+input.emoji)==='a'+'\u{1F600}'.repeat(3999),
+    /[\uD800-\uDBFF]$/.test(api.speechText('a'+input.emoji))]}));});"""
+        emoji = "\U0001F600" * provider_client.MAX_OUTPUT_CHARS
+        self.assertLessEqual(len(emoji.encode("utf-8")), provider_client.MAX_OUTPUT_BYTES)
+        out = run_node(self, script, {"emoji": emoji})
+        self.assertEqual(out["limits"], [provider_client.MAX_PROMPT_CHARS, provider_client.MAX_OUTPUT_CHARS, 4000])
+        self.assertEqual(out["ok"], ["hi", True, 5000])
+        self.assertEqual(out["bad"], [None] * 6)
+        self.assertEqual(out["emoji"], [True, None, True, True, False])
+        html = (ROOT / "web" / "setup.html").read_text(encoding="utf-8")
+        self.assertIn('<textarea id="prompt" rows="3" maxlength="%d"' % provider_client.MAX_PROMPT_CHARS, html)
+        source = SETUP_JS.read_text(encoding="utf-8")
+        self.assertNotIn("result.reply.slice(", source)
+        self.assertIn("new Utterance(speechText(text))", source)
+
 
 class StaticSafetyTests(unittest.TestCase):
     def test_setup_script_only_fetches_contracted_same_origin_paths(self):

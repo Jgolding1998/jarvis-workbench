@@ -439,6 +439,21 @@
     }
   }
 
+  /* Limits shared with jarvis/provider_client.py: prompts up to 4,000 characters, validated replies up to 16,000.
+     Read-aloud stays bounded; the page says so when a longer reply is only partly spoken. */
+  const PROMPT_LIMIT = 4000;
+  const REPLY_LIMIT = 16000;
+  const SPEAK_LIMIT = 4000;
+  /* Limits count code points, as Python len() does; one code point is at most two UTF-16 units. */
+  function chatReply(value) {
+    if (typeof value !== "string" || value.trim() === "" || value.length > REPLY_LIMIT * 2) return null;
+    return Array.from(value).length <= REPLY_LIMIT ? value : null;
+  }
+  /* The first SPEAK_LIMIT code points, never ending inside a surrogate pair. */
+  function speechText(text) {
+    return Array.from(text.slice(0, SPEAK_LIMIT * 2)).slice(0, SPEAK_LIMIT).join("");
+  }
+
   /* Optional read-aloud for AI replies on the local setup page. Uses only voices the browser marks as on-device
      (localService === true), never a remote voice and never the microphone. Speaks only when asked. */
   function createReader(synth, Utterance) {
@@ -459,7 +474,7 @@
       cancel();
       const voice = localVoice();
       if (!voice || typeof text !== "string" || !text.trim()) return false;
-      const utterance = new Utterance(text.slice(0, 4000));
+      const utterance = new Utterance(speechText(text));
       utterance.voice = voice;
       if (typeof voice.lang === "string") utterance.lang = voice.lang;
       const finish = () => { if (done) done(); };
@@ -473,7 +488,7 @@
 
   const api = {validateAnswers, buildPlan, defaultAnswers, readProviderCatalog, importedAnswers, isMobilePlanner, money,
     validateChoices, checkCatalog, recommend, choicesFromQuery, choicesQuery, isLoopbackPage, isSafeLaunchUrl, readQuickstartState, readBudget, budgetLabel, dollars,
-    importedChoices, parseImportJson, createReader, IMPORT_LIMIT, IMPORT_ERROR, CHOICE_ERRORS, CHOICE_KEYS, OPTION_KEYS, QUICKSTART_SCHEMA, CHOICES_SCHEMA, CHOICES_SCHEMAS};
+    importedChoices, parseImportJson, createReader, chatReply, speechText, PROMPT_LIMIT, REPLY_LIMIT, SPEAK_LIMIT, IMPORT_LIMIT, IMPORT_ERROR, CHOICE_ERRORS, CHOICE_KEYS, OPTION_KEYS, QUICKSTART_SCHEMA, CHOICES_SCHEMA, CHOICES_SCHEMAS};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => boot(api));
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -496,6 +511,8 @@ const MESSAGES = {
   promptEmpty: "Type a question first.",
   chat: "No reply. Check the key and your internet connection, then try again.",
   noVoice: "No voice installed on this computer was found, so the reply stays as text.",
+  promptLong: "Shorten the question to 4,000 characters or fewer.",
+  readAloudPartial: "Reading aloud the first 4,000 characters only. The full reply is shown as text.",
   readAloudOff: "Read aloud is off when Jarvis starts with offline voice commands. This keeps replies from being heard as commands. Typed questions and replies still work.",
   stopped: "Stopped reading aloud.",
   install: "Install did not start. Try again.",
@@ -849,6 +866,7 @@ function boot(api) {
     state.speaking = started;
     $("stop-speaking").hidden = !started;
     if (!started) status(MESSAGES.noVoice);
+    else if (api.speechText(text) !== text) status(MESSAGES.readAloudPartial);
   }
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && state.speaking) { stopSpeaking(); status(MESSAGES.stopped); } });
   window.addEventListener("pagehide", stopSpeaking);
@@ -938,12 +956,13 @@ function boot(api) {
       if (needConsent()) return;
       const prompt = $("prompt").value.trim();
       if (!prompt) { status(MESSAGES.promptEmpty, true); $("prompt").focus(); return; }
+      if (prompt.length > api.PROMPT_LIMIT) { status(MESSAGES.promptLong, true); $("prompt").focus(); return; }
       stopSpeaking();
       const plan = api.recommend(state.choices, state.catalog);
       try {
         const result = await localJson("/api/quickstart/chat", {provider: plan.provider, prompt, consent: true});
-        if (typeof result.reply !== "string") throw new Error("bad reply");
-        const reply = result.reply.slice(0, 4000);
+        const reply = api.chatReply(result.reply);
+        if (reply === null) throw new Error("bad reply");
         $("chat-reply").textContent = reply;
         $("chat-reply").hidden = false;
         status("");
