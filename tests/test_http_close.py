@@ -198,7 +198,13 @@ class HTTPResponseCloseTests(unittest.TestCase):
                 if time.monotonic() >= deadline:
                     self.fail("The sixteen fixture connections were not admitted")
                 time.sleep(.005)
-            self.delayed_rejection(503, "Server busy")
+            # Exercise real admission and recovery without coupling them to a
+            # client sleep near the separate 100ms delayed-body linger bound.
+            with socket.create_connection(self.server.server_address, timeout=2) as client:
+                client.sendall(self.opening())
+                self.assert_response(client, 503, "Server busy")
+                self.assertEqual(client.recv(1), b"")
+            self.assertEqual(self.runtime.calls, [])
         finally:
             for client in clients:
                 client.close()
