@@ -18,6 +18,20 @@ TOKEN = "transport-regression-fixture"
 MARKER = b"SYNTHETIC-NOT-FOR-RESPONSE"
 
 
+class LingerBoundsTests(unittest.TestCase):
+    def test_large_clock_rounding_never_extends_the_socket_timeout(self):
+        request = MagicMock()
+        request.recv.return_value = b"x" * 4096
+        # IEEE 754 subtraction at this uptime exceeds .1 without the clamp.
+        self.assertGreater((100000.0 + .1) - 100000.0, .1)
+        with patch.object(transport.time, "monotonic", return_value=100000.0):
+            transport._linger_discard(request)
+        self.assertEqual(request.recv.call_count, 4)
+        self.assertEqual(request.settimeout.call_count, 4)
+        self.assertTrue(all(0 < call.args[0] <= .1 for call in request.settimeout.call_args_list))
+        request.shutdown.assert_called_once_with(socket.SHUT_WR)
+
+
 class StubRuntime:
     _status_instance = "0123456789abcdef"
 

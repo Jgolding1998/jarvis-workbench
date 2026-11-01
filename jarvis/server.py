@@ -290,7 +290,8 @@ def _linger_discard(request):
         if left <= 0:
             return
         try:
-            request.settimeout(left)
+            # Large monotonic values can round deadline - now slightly upward.
+            request.settimeout(min(.1, left))
             block = request.recv(min(4096, remaining))
         except OSError:
             return
