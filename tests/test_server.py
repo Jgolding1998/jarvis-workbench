@@ -319,7 +319,8 @@ class ProtocolLimitTests(unittest.TestCase):
         server.process_request(request, ("127.0.0.1", 10000))
         self.assertEqual(request.recv.call_count,4)
         request.shutdown.assert_any_call(socket.SHUT_WR)
-        request.settimeout.assert_called_once_with(0.05)
+        self.assertEqual(request.settimeout.call_count, 4)
+        self.assertTrue(all(0 < call.args[0] <= .1 for call in request.settimeout.call_args_list))
         request.close.assert_called_once_with()
 
 

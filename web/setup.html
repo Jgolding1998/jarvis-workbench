@@ -6,13 +6,14 @@
 <meta name="jarvis-mode" content="auto">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <meta name="description" content="Set up Jarvis one short question at a time and get one recommended setup with install steps.">
-<meta name="theme-color" content="#01070a">
+<meta name="theme-color" content="#f6f1e8">
 <title>Set up Jarvis</title>
 <link rel="icon" href="favicon.svg">
 <link rel="stylesheet" href="setup.css">
 <script src="setup.js" defer></script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to setup</a>
 <div class="shell">
   <header class="top">
     <span class="brand">
@@ -166,7 +167,7 @@
     </section>
   </main>
 
-  <footer class="foot">
+  <footer class="foot" aria-label="Project links">
     <a id="feedback" href="#" target="_blank" rel="noopener noreferrer">Feedback</a>
     <a class="agent-guide" href="#" target="_blank" rel="noopener noreferrer">Install with an AI agent</a>
     <a id="source-zip" href="#" rel="noopener noreferrer">Source ZIP</a>

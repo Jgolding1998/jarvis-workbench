@@ -76,14 +76,18 @@ After setup, start the safe demo at any time:
 python -m jarvis.server --demo
 ```
 
-Open **http://127.0.0.1:8765**. The demo simulates desktop actions and does not create files.
+Open **http://127.0.0.1:8765**. The demo simulates desktop actions and does not create files. Everything marked **SIMULATED** is synthetic.
 
-1. Type `active` and choose **Run command**.
+1. Choose **Start observing**. This only observes: it never arms an action, opens a device you did not enable at launch, moves the cursor, or changes a permission.
 2. Choose **Privacy lock** and apply the permission.
 3. Choose **Step away**. After more than 30 seconds, the activity list records a simulated lock.
 4. Choose **At my desk** to reset the absence timer.
 5. Choose **Another person**. After two continuous seconds, the privacy action is simulated.
-6. Use **Stop and disarm** to stop evaluation and clear both action permissions.
+6. Use **Stop and disarm** to stop evaluation and clear both action permissions. The dashboard says "Stop confirmed by Jarvis" only after the service answers with a stopped, disarmed state.
+
+Typed commands (`active`, `inactive`, `stop`, `watch me`, `stop mouse`) remain available under **Advanced: type a command**.
+
+Until the first status arrives, the dashboard shows guard, actions and hand control as unknown and keeps Start, permissions and practice unavailable. The connection badge shows whether readings are live. If status updates stall or fail, the dashboard marks readings as delayed, then unknown, and shows the last known state with its age. A lost browser connection is never reported as a stopped or disarmed guard; Stop stays available and reports whether Jarvis confirmed it. A restarted service requires a reload. **Copy diagnostics** produces a short report of mode, operating system, Python version, optional package and model availability, and connection state, without keys, chat text, file paths, host names or camera data.
 
 For **Boss Alert**, select that action instead of privacy lock. Two people in view for two seconds produces a simulated workbook event. This is a playful synthetic-data demonstration, not identification of a boss or an attempt to hide activity.
 
@@ -97,6 +101,15 @@ Point with one raised open hand. Thumb to middle finger is a left click; thumb t
 
 Clap, Esc, `stop mouse`, or **Stop hand control** stops hand control only. Hand stop never disarms presence permissions; an active presence guard keeps running during hand practice. The camera has one owner at a time: hand control and the presence guard cannot both use it, and starting one while the other runs gives a clear message instead of silently stopping either.
 
+## How it is built
+
+- **Problem:** a desk companion that can watch for presence or hand gestures is only trustworthy if it is obvious what it is doing, what is simulated, and what happens when something fails.
+- **Choices:** a standard-library Python service bound to loopback with a per-process token and strict Content Security Policy; a deterministic presence state machine; fixed command and action allowlists; devices off until separate launch flags and local arming; AI replies treated as plain text that cannot trigger actions. The dashboard, setup and public practice site are plain HTML, CSS and JavaScript with no framework, remote fonts or analytics.
+- **Reproduce:** `python -m jarvis.server --demo`, then `python -m unittest discover -s tests -v`. Browser checks run with `node tests/browser_quickstart.cjs` (setup, website and dashboard, with a mocked API and a local Chromium).
+- **Lessons applied:** [what we learned from related projects' public issues](docs/UPSTREAM_LESSONS.md), with their status at inspection time.
+- **Limits:** see [Limits worth understanding](#limits-worth-understanding). Simulated tests and fixtures are not evidence of camera accuracy or of a completed Windows lock.
+- **Collaboration:** developed with AI coding assistants (including OpenAI Codex and Anthropic Claude Code) working under the maintainer's direction. The commit history records the actual changes.
+
 ## Build your own
 
 The [setup guide](docs/BUILD_YOUR_OWN.md) covers a fresh environment, local voice models, observation-only camera calibration, and the separate flags that permit real actions. The [architecture](docs/ARCHITECTURE.md) explains state transitions and the security boundary.
@@ -107,7 +120,7 @@ The [setup guide](docs/BUILD_YOUR_OWN.md) covers a fresh environment, local voic
 python -m unittest discover -s tests -v
 ```
 
-The suite covers the presence policy timing, invalid inputs, workbook contents, simulated action isolation, local session authorization, DNS rebinding, and cross-origin requests. It also covers the setup wizard: answer validation, prototype-key and unknown-field rejection, budget limits, deterministic plans, identical results from the Python and browser planners (when Node.js is installed), atomic config saving, the local HTTP routes, the launcher's end-to-end apply and exit, the missing-Python message, hand control permissions, camera ownership, clap and Esc stops, fake cursor output, and microphone loss recovery with a fake audio stream. Tests use fake observations and fake Windows calls; they never open a camera or microphone, move the cursor, or lock the machine.
+The suite covers the presence policy timing, invalid inputs, workbook contents, simulated action isolation, local session authorization, DNS rebinding, and cross-origin requests. It also covers the setup wizard: answer validation, prototype-key and unknown-field rejection, budget limits, deterministic plans, identical results from the Python and browser planners (when Node.js is installed), atomic config saving, the local HTTP routes, the launcher's end-to-end apply and exit, the missing-Python message, hand control permissions, camera ownership, clap and Esc stops, fake cursor output, and microphone loss recovery with a fake audio stream. Browser fixtures also cover the dashboard: live, delayed and lost status, hung and failed polls, old snapshots, recovery, restart, truthful Stop acknowledgement, diagnostics, keyboard, phone layout and reduced motion. Tests use fake observations and fake Windows calls; they never open a camera or microphone, move the cursor, or lock the machine.
 
 Camera accuracy, microphone recognition, a physical Windows lock, opening Excel, and live hand tracking need manual checks on your own hardware. A successful Windows API result means the request started, not proof that it completed.
 

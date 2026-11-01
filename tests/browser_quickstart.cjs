@@ -1,7 +1,9 @@
 "use strict";
 /* Headless browser checks for the one-question-per-screen web/setup.html with a mocked local API.
    Usage: node tests/browser_quickstart.cjs [screenshot-dir]
-   Prints "SKIP: ..." and exits 0 when no Chromium-based browser is installed.
+   Local runs may skip missing prerequisites. Set JARVIS_REQUIRE_BROWSER=1 in CI
+   to fail when Chromium or Node's WebSocket API is unavailable.
+   Also runs tests/browser_dashboard.cjs for the local dashboard (see dashboardChecks).
    Never touches a real Jarvis service, camera, microphone, cursor, speaker or provider: every request is
    answered by the in-process mock, speech synthesis is replaced by a recording fake, and any request to
    another origin fails the run. */
@@ -16,7 +18,7 @@ const WEB = path.join(ROOT, "web");
 const lib = require(path.join(WEB, "setup.js"));
 const catalog = JSON.parse(fs.readFileSync(path.join(WEB, "quickstart-catalog.json"), "utf8"));
 const SHOTS = process.argv[2] || "";
-const importDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-qs-files-"));
+let importDir = "";
 const SECRET = "nvapi-FIXTURE-" + "do-not-leak-7f3a";
 const LEAK = "SERVER-ERROR-TEXT-" + "c:\\Users\\private";
 const TOKEN = "fixture-token-123";
@@ -1052,8 +1054,14 @@ async function localInstallStatusRecovery() {
 
 async function main() {
   const browser = findBrowser();
-  if (!browser) { console.log("SKIP: no Chromium-based browser found (set JARVIS_TEST_BROWSER)"); return; }
-  if (typeof WebSocket !== "function") { console.log("SKIP: Node WebSocket API is unavailable"); return; }
+  const missing = !browser ? "No Chromium-based browser found (set JARVIS_TEST_BROWSER)" :
+    typeof WebSocket !== "function" ? "Node WebSocket API is unavailable" : "";
+  if (missing) {
+    if (process.env.JARVIS_REQUIRE_BROWSER === "1") throw new Error(missing);
+    console.log("SKIP: " + missing);
+    return;
+  }
+  importDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-qs-files-"));
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = "http://127.0.0.1:" + server.address().port;
   allowedOrigins.add(origin);
@@ -1125,8 +1133,27 @@ async function main() {
     try { fs.rmSync(profile, {recursive: true, force: true}); } catch (error) { /* browser may still hold files */ }
     try { fs.rmSync(importDir, {recursive: true, force: true}); } catch (error) { /* best effort */ }
   }
+  dashboardChecks();
   console.log(JSON.stringify({passed, failures}, null, 1));
   if (failures.length) process.exitCode = 1;
+}
+
+/* The local dashboard has its own fixture (tests/browser_dashboard.cjs: freshness, hung/failed/old status,
+   recovery, restart, Start/Stop, diagnostics, keyboard, phone, reduced motion). Run it here so the required
+   CI browser job executes it. A browser was already found, so a dashboard skip counts as a failure. */
+function dashboardChecks() {
+  const {spawnSync} = require("node:child_process");
+  const args = [path.join(__dirname, "browser_dashboard.cjs")];
+  if (SHOTS) args.push(path.join(SHOTS, "dashboard"));
+  const result = spawnSync(process.execPath, args, {encoding: "utf8", timeout: 240000, env: process.env});
+  const out = result.stdout || "";
+  if (out.startsWith("SKIP")) { failures.push("dashboard browser checks skipped: " + out.trim()); return; }
+  let report = null;
+  try { report = JSON.parse(out.slice(out.indexOf("{"))); } catch (error) { report = null; }
+  if (!report || !Array.isArray(report.failures)) { failures.push("dashboard browser checks produced no report: " + (result.stderr || "").slice(-400)); return; }
+  passed += report.passed;
+  for (const failure of report.failures) failures.push("dashboard: " + failure);
+  check(result.status === 0, "dashboard browser checks exit cleanly");
 }
 
 main().catch((error) => { console.error(error && error.stack || String(error)); console.log(JSON.stringify({passed, failures})); process.exitCode = 1; });

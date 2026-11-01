@@ -22,6 +22,16 @@ EOF_SECONDS = 5
 CLOSE_JOIN_SECONDS = 10
 CLOSING = "Setup is closing. Start Jarvis again to continue."
 PROVIDERS = CLOUD | {"none", "ollama"}
+# Use the base interpreter for the gate: a venv python.exe may be a redirecting launcher.
+# The selected desktop and all of its descendants start only after job assignment. The
+# remaining stdin pipe is the desktop's existing parent-watch channel, not commands.
+DESKTOP_GATE = (
+    "import os,subprocess,sys\n"
+    "if sys.stdin.buffer.readline(32) != (str(os.getpid())+'\\n').encode('ascii'): raise SystemExit(125)\n"
+    "code=subprocess.call(sys.argv[1:],stdin=sys.stdin,stdout=sys.stdout,stderr=sys.stderr,"
+    "shell=False,close_fds=True,creationflags=subprocess.CREATE_NO_WINDOW)\n"
+    "os._exit(code if code < 2**31 else code-2**32)\n"
+)
 
 
 class OnboardingError(ValueError):
@@ -335,27 +345,55 @@ class Onboarding:
 
     @staticmethod
     def _stop(process, grace=None):
-        """Ask only our own child to exit by closing its parent-watch pipe, then terminate, kill and reap it."""
+        """Close the parent pipe, then stop and reap only this launch's owned process tree."""
         grace = EOF_SECONDS if grace is None else grace
+        job = vars(process).pop("_jarvis_desktop_job", None)
+        reader = vars(process).get("_jarvis_desktop_reader")
         try:
             if process.stdin is not None:
                 process.stdin.close()
         except OSError:
             pass
-        for stop, wait in ((None, grace), (process.terminate, 3), (process.kill, 3)):
-            try:
-                if stop is not None:
-                    stop()
-                process.wait(timeout=wait)
+        try:
+            if job is not None:
+                try:
+                    process.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    pass
+                # Reap retained member handles as well as the gate. Waiting for only
+                # a terminated venv launcher can leave its interpreter holding cwd.
+                if not install_tools._end(process, job):
+                    raise OnboardingError("Could not confirm the desktop helpers stopped. Close Jarvis before retrying.")
                 return
-            except subprocess.TimeoutExpired:
-                continue
-            except OSError:
-                if process.poll() is not None:
+            for stop, wait in ((None, grace), (process.terminate, 3), (process.kill, 3)):
+                try:
+                    if stop is not None:
+                        stop()
+                    process.wait(timeout=wait)
                     return
+                except subprocess.TimeoutExpired:
+                    continue
+                except OSError:
+                    if process.poll() is not None:
+                        return
+        finally:
+            if job is not None:
+                job.close()
+            if reader is not None and reader is not threading.current_thread():
+                if reader.ident is not None:
+                    reader.join(install_tools.STOP_SECONDS)
+                    if reader.is_alive():
+                        raise OnboardingError("Could not confirm the desktop output reader stopped. Close Jarvis before retrying.")
+                elif process.stdout is not None:
+                    # close() may win before Thread.start(). A late reader sees a
+                    # closed pipe and cannot keep the already-reaped job alive.
+                    process.stdout.close()
+            elif reader is None and process.stdout is not None:
+                process.stdout.close()
 
     def _refresh_desktop(self):
         if self._desktop_process is not None and self._desktop_process.poll() is not None:
+            self._stop(self._desktop_process, grace=0)
             self._desktop_process = None
             self._desktop_url = None
 
@@ -371,10 +409,32 @@ class Onboarding:
             if self._closed:
                 raise OnboardingError("Setup is closing. Start Jarvis again to open the desktop app.")
             # The child exits when this pipe reaches end of file: on close() and also when this process dies.
-            process = subprocess.Popen([str(executable), "-u", "-m", "jarvis.desktop", "--feature", feature, "--parent-watch"],
-                                       cwd=self.root, env=env, shell=False, stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            try:
+                job = install_tools.WindowsJob()
+            except OSError:
+                raise OnboardingError("The desktop app could not start. Check the selected tools and try again.") from None
+            process = None
+            try:
+                base = getattr(sys, "_base_executable", None) or sys.executable
+                process = subprocess.Popen([base, "-I", "-S", "-u", "-c", DESKTOP_GATE,
+                                            str(executable), "-u", "-m", "jarvis.desktop", "--feature", feature, "--parent-watch"],
+                                           cwd=self.root, env=env, shell=False, stdin=subprocess.PIPE,
+                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                           close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                job.assign(process.pid)
+                process._jarvis_desktop_job = job
+                process.stdin.reconfigure(newline="\n")
+                process.stdin.write(str(process.pid) + "\n")
+                process.stdin.flush()
+            except BaseException as error:
+                try:
+                    if process is not None:
+                        self._stop(process, grace=0)
+                finally:
+                    job.close()
+                if isinstance(error, (OSError, ValueError)):
+                    raise OnboardingError("The desktop app could not start. Check the selected tools and try again.") from None
+                raise
             self._desktop_process = process
         result = Queue(maxsize=1)
 
@@ -401,7 +461,20 @@ class Onboarding:
                 except Full:
                     pass
 
-        threading.Thread(target=read_address, daemon=True).start()
+        reader = threading.Thread(target=read_address, daemon=True)
+        process._jarvis_desktop_reader = reader
+        try:
+            reader.start()
+        except BaseException as error:
+            with self._lock:
+                owned = self._desktop_process is process
+                if owned:
+                    self._desktop_process = None
+            if owned:
+                self._stop(process, grace=0)
+            if isinstance(error, RuntimeError):
+                raise OnboardingError("The desktop app could not start. Check the selected tools and try again.") from None
+            raise
         try:
             address = result.get(timeout=STARTUP_SECONDS)
         except Empty:

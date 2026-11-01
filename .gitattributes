@@ -1,2 +1,5 @@
 *.cmd text eol=crlf
 scripts/licenses/* -text
+# Preserve the exact bytes shared with Presence Guard's provenance manifest.
+jarvis/presence.py -text
+jarvis/actions.py -text
