@@ -271,6 +271,35 @@ BUSY_RESPONSE = (b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: application
                  b"Content-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nConnection: close\r\n\r\n" + _BUSY)
 
 
+def _linger_discard(request):
+    """Preserve the flushed response while discarding at most 16 KiB for 100ms.
+
+    Closing with unread socket input can reset the peer's unread response,
+    especially when an early rejection precedes a delayed request body. Send
+    FIN first, then discard raw bytes without parsing or acting on them.
+    Buffered handler input has already left the kernel. Larger/later sends can
+    still reset a connection; this is bounded cleanup, not request acceptance.
+    """
+    try:
+        request.shutdown(socket.SHUT_WR)
+    except OSError:
+        return
+    remaining, deadline = 16 * 1024, time.monotonic() + .1
+    while remaining:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        try:
+            # Large monotonic values can round deadline - now slightly upward.
+            request.settimeout(min(.1, left))
+            block = request.recv(min(4096, remaining))
+        except OSError:
+            return
+        if not block:
+            return
+        remaining -= len(block)
+
+
 class SocketDeadline:
     """Shuts a connection down at a fixed time unless cancelled. It never fires after cancel() returns."""
 
@@ -317,22 +346,22 @@ class LocalHTTPServer(ThreadingHTTPServer):
         connection.settimeout(3)
         return connection, address
 
+    def shutdown_request(self, request):
+        # Handler.finish() has flushed normal/error replies; admission failures
+        # arrive here after sendall(). Both share one cleanup bound and closure.
+        try:
+            _linger_discard(request)
+        finally:
+            super().shutdown_request(request)
+
     def process_request(self, request, address):
         if not self.connections.acquire(blocking=False):
             try:
                 request.sendall(BUSY_RESPONSE)
-                request.shutdown(socket.SHUT_WR)
-                request.settimeout(0.05)
-                remaining = 16384
-                deadline = time.monotonic() + 0.1
-                while remaining > 0 and time.monotonic() < deadline:
-                    data = request.recv(min(4096, remaining))
-                    if not data:
-                        break
-                    remaining -= len(data)
             except OSError:
                 pass
-            self.shutdown_request(request)
+            finally:
+                self.shutdown_request(request)
             return
         try:
             super().process_request(request, address)

@@ -34,7 +34,12 @@ jobs:
           head = git('rev-parse', 'HEAD').decode('ascii').strip()
           if head != os.environ['GITHUB_SHA']:
               raise ValueError('Checkout does not match the workflow commit')
-          if git('show', 'HEAD:.gitattributes') != b'*.cmd text eol=crlf\nscripts/licenses/* -text\n':
+          expected_attributes = (
+              b'*.cmd text eol=crlf\nscripts/licenses/* -text\n'
+              b'# Preserve the exact bytes shared with Presence Guard\'s provenance manifest.\n'
+              b'jarvis/presence.py -text\njarvis/actions.py -text\n'
+          )
+          if git('show', 'HEAD:.gitattributes') != expected_attributes:
               raise ValueError('Review source archive handling for changed Git attributes')
           epoch = int(git('log', '-1', '--format=%ct').strip())
           destination = Path(os.environ['RUNNER_TEMP']) / 'jarvis-artifacts'

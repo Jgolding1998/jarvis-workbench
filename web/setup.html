@@ -6,18 +6,19 @@
 <meta name="jarvis-mode" content="auto">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <meta name="description" content="Set up Jarvis one short question at a time and get one recommended setup with install steps.">
-<meta name="theme-color" content="#01070a">
+<meta name="theme-color" content="#f6f1e8">
 <title>Set up Jarvis</title>
 <link rel="icon" href="favicon.svg">
 <link rel="stylesheet" href="setup.css">
 <script src="setup.js" defer></script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to setup</a>
 <div class="shell">
   <header class="top">
     <span class="brand">
       <svg class="mark" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 3"/><circle cx="20" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="4.5" fill="currentColor"/></svg>
-      <span>JARVIS<span class="light"> SETUP</span></span>
+      <span>Jarvis<span class="light"> setup</span></span>
     </span>
     <span id="mode-badge" class="badge">LOADING</span>
   </header>
@@ -82,7 +83,7 @@
     </form>
 
     <section id="result" class="card result" aria-labelledby="plan-title" hidden>
-      <p class="eyebrow">YOUR RECOMMENDED SETUP</p>
+      <p class="eyebrow">Your recommended setup</p>
       <h1 id="plan-title" tabindex="-1"></h1>
       <p id="plan-summary" class="summary"></p>
       <ul id="plan-stack" class="stack" aria-label="What this setup uses"></ul>
@@ -166,7 +167,7 @@
     </section>
   </main>
 
-  <footer class="foot">
+  <footer class="foot" aria-label="Project links">
     <a id="feedback" href="#" target="_blank" rel="noopener noreferrer">Feedback</a>
     <a class="agent-guide" href="#" target="_blank" rel="noopener noreferrer">Install with an AI agent</a>
     <a id="source-zip" href="#" rel="noopener noreferrer">Source ZIP</a>

@@ -454,32 +454,39 @@ class OnboardingHTTPTests(unittest.TestCase):
             path.unlink()
 
 
-STUB_DESKTOP = """import pathlib, sys, time
+STUB_DESKTOP = """import os, pathlib, subprocess, sys, time
 mode = sys.argv[sys.argv.index("--feature") + 1]
 marker = pathlib.Path("stub-" + mode + ".txt")
 if "--parent-watch" not in sys.argv:
     sys.exit(3)
+pathlib.Path("pid-" + mode + ".txt").write_text(str(os.getpid()))
 if mode == "fail":
     print("The selected desktop tools are incomplete. Run setup again.", flush=True)
     sys.exit(2)
 if mode == "slow":
     time.sleep(1.5)
+if mode == "tree":
+    child = subprocess.Popen([sys.executable, "-u", "-c", "import os,time; print(os.getpid(),flush=True); time.sleep(60)"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    pathlib.Path("pid-descendant.txt").write_text(child.stdout.readline().strip())
+    child.stdout.close()
 print("Jarvis: http://127.0.0.1:43210", flush=True)
-if mode == "stubborn":
+if mode in ("stubborn", "tree"):
     time.sleep(60)
 while sys.stdin.buffer.read(4096):
     pass
 marker.write_text("parent pipe closed")
 """
 
-PARENT = """import sys
+PARENT = """import json, pathlib, sys
 sys.path.insert(0, sys.argv[1])
 from unittest.mock import patch
 from jarvis import bundle, onboarding
 with patch.object(bundle, "is_bundled", return_value=True):
     manager = onboarding.Onboarding(sys.argv[2], vault=object(), budget=object())
-    manager._launch_desktop("camera")
-print(manager._desktop_process.pid, flush=True)
+    manager._launch_desktop(sys.argv[3])
+print(json.dumps([manager._desktop_process.pid, int((pathlib.Path(sys.argv[2])/("pid-"+sys.argv[3]+".txt")).read_text())]), flush=True)
+sys.stdin.buffer.read(1)
 import os, signal
 os.kill(os.getpid(), signal.SIGTERM)  # Windows: TerminateProcess, no cleanup runs
 """
@@ -565,6 +572,155 @@ class DesktopLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(self.children[0].poll())
         self.assertIsNone(self.manager._desktop_process)
 
+    def test_job_assignment_failure_never_releases_the_desktop(self):
+        with patch("jarvis.install_tools.WindowsJob.assign", side_effect=OSError("synthetic assignment failure")):
+            with self.assertRaisesRegex(OnboardingError, "could not start"):
+                self.manager._launch_desktop("camera")
+        self.assertEqual(len(self.children), 1)
+        self.assertIsNotNone(self.children[0].poll())
+        self.assertTrue(self.children[0].stdout.closed)
+        self.assertFalse((self.root / "pid-camera.txt").exists())
+        self.assertIsNone(self.manager._desktop_process)
+
+    def test_job_creation_failure_never_spawns_any_process(self):
+        with patch("jarvis.install_tools.WindowsJob", side_effect=OSError("synthetic creation failure")):
+            with self.assertRaisesRegex(OnboardingError, "could not start"):
+                self.manager._launch_desktop("camera")
+        self.assertEqual(self.children, [])
+
+    def test_reader_start_failure_reaps_the_released_desktop(self):
+        original = threading.Thread.start
+
+        def fail_reader(thread):
+            if getattr(thread._target, "__name__", "") == "read_address":
+                raise RuntimeError("synthetic thread start failure")
+            return original(thread)
+
+        with patch("jarvis.onboarding.threading.Thread.start", new=fail_reader):
+            with self.assertRaisesRegex(OnboardingError, "could not start"):
+                self.manager._launch_desktop("camera")
+        self.assertIsNone(self.manager._desktop_process)
+        self.assertIsNotNone(self.children[0].poll())
+        self.assertTrue(self.children[0].stdout.closed)
+
+    def test_close_before_reader_start_is_safe_and_rejects_late_startup(self):
+        entered, release = threading.Event(), threading.Event()
+        original = threading.Thread.start
+        failures = []
+
+        def pause_reader(thread):
+            if getattr(thread._target, "__name__", "") == "read_address":
+                entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("synthetic coordination deadline")
+            return original(thread)
+
+        def launch():
+            try:
+                with patch("jarvis.onboarding.threading.Thread.start", new=pause_reader):
+                    self.manager._launch_desktop("camera")
+            except OnboardingError as error:
+                failures.append(str(error))
+
+        worker = threading.Thread(target=launch)
+        try:
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            self.manager.close()
+            self.assertIsNotNone(self.children[0].poll())
+            self.assertTrue(self.children[0].stdout.closed)
+        finally:
+            release.set()
+            worker.join(10)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(failures), 1)
+        self.assertIsNone(self.manager._desktop_process)
+        self.assertIsNone(self.manager._desktop_url)
+
+    def test_interrupted_assignment_reaps_the_unreleased_gate_and_preserves_cancellation(self):
+        with patch("jarvis.install_tools.WindowsJob.assign", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.manager._launch_desktop("camera")
+        self.assertEqual(len(self.children), 1)
+        self.assertIsNotNone(self.children[0].poll())
+        self.assertTrue(self.children[0].stdout.closed)
+        self.assertFalse((self.root / "pid-camera.txt").exists())
+        self.assertIsNone(self.manager._desktop_process)
+
+    def test_mismatched_gate_release_never_starts_the_desktop(self):
+        from jarvis import install_tools
+        from jarvis.onboarding import DESKTOP_GATE
+        base = getattr(sys, "_base_executable", None) or sys.executable
+        job = install_tools.WindowsJob()
+        process = None
+        try:
+            process = subprocess.Popen([base, "-I", "-S", "-u", "-c", DESKTOP_GATE,
+                                        sys.executable, "-u", "-m", "jarvis.desktop", "--feature", "camera", "--parent-watch"],
+                                       cwd=self.root, env=install_tools.safe_environment(), stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            job.assign(process.pid)
+            process._jarvis_desktop_job = job
+            process.stdin.reconfigure(newline="\n")
+            process.stdin.write(str(process.pid + 1) + "\n")
+            process.stdin.close()
+            self.assertEqual(process.wait(5), 125)
+            self.assertFalse((self.root / "pid-camera.txt").exists())
+        finally:
+            if process is not None:
+                self.manager._stop(process, grace=0)
+            job.close()
+
+    def test_close_reaps_descendants_and_reader_without_stopping_an_unrelated_owned_control(self):
+        from jarvis import install_tools
+        base = getattr(sys, "_base_executable", None) or sys.executable
+        control = subprocess.Popen([base, "-I", "-S", "-c", "import time; time.sleep(60)"], cwd=self.root,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        handles, kernel = [], None
+        try:
+            self.manager._launch_desktop("tree")
+            process = self.manager._desktop_process
+            reader = process._jarvis_desktop_reader
+            kernel, handles = self._retain_processes([int((self.root / "pid-descendant.txt").read_text())])
+            with patch("jarvis.onboarding.EOF_SECONDS", 0.3):
+                started = time.monotonic()
+                self.manager.close()
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertIsNotNone(process.poll())
+            self.assertFalse(reader.is_alive())
+            self.assertTrue(process.stdout.closed)
+            self.assertEqual(kernel.WaitForSingleObject(handles[0], 0), 0, "An owned descendant survived close")
+            self.assertIsNone(control.poll(), "A process outside the desktop job was stopped")
+        finally:
+            if kernel:
+                for handle in handles:
+                    kernel.CloseHandle(handle)
+            if control.poll() is None:
+                control.terminate()
+                control.wait(5)
+
+    def _retain_processes(self, pids):
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handles = []
+        try:
+            for pid in pids:
+                handle = kernel.OpenProcess(0x00100000 | 0x1000, False, pid)
+                self.assertTrue(handle, "Could not retain this fixture's live process")
+                handles.append(handle)
+            return kernel, handles
+        except BaseException:
+            for handle in handles:
+                kernel.CloseHandle(handle)
+            raise
+
     def test_close_during_startup_rejects_the_late_address(self):
         self.manager._install_state, self.manager._installed_feature = "ready", "slow"
         failures = []
@@ -590,33 +746,44 @@ class DesktopLifecycleTests(unittest.TestCase):
             self.manager.launch(True)
 
     def test_forced_parent_death_stops_the_child(self):
-        import ctypes
+        self._forced_parent_death("camera")
+
+    def test_forced_parent_death_stops_a_child_that_ignores_the_parent_pipe(self):
+        self._forced_parent_death("stubborn")
+
+    def _forced_parent_death(self, feature):
+        from queue import Queue
         repo = str(Path(__file__).resolve().parents[1])
         env = {key: value for key, value in os.environ.items() if key.upper() in {"SYSTEMROOT", "WINDIR"}}
-        parent = subprocess.run([sys.executable, "-I", "-c", PARENT, repo, str(self.root)], capture_output=True,
-                                text=True, timeout=60, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        self.assertEqual(parent.returncode, 15, parent.stderr[-500:])
-        pid = int(parent.stdout.split()[0])
-        marker = self.root / "stub-camera.txt"
-        end = time.monotonic() + 10
-        while not marker.exists() and time.monotonic() < end:
-            time.sleep(.05)
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        end = time.monotonic() + 5
-        while time.monotonic() < end:
-            handle = kernel.OpenProcess(0x1000, False, pid)
-            if not handle:
-                break
-            code = ctypes.c_ulong()
-            kernel.GetExitCodeProcess(handle, ctypes.byref(code))
-            kernel.CloseHandle(handle)
-            if code.value != 259:
-                break
-            time.sleep(.05)
-        else:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            self.fail("The desktop child outlived its forcibly stopped parent")
-        self.assertEqual(marker.read_text(), "parent pipe closed")
+        base = getattr(sys, "_base_executable", None) or sys.executable
+        parent = subprocess.Popen([base, "-I", "-c", PARENT, repo, str(self.root), feature], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        ready = Queue(maxsize=1)
+        reader = threading.Thread(target=lambda: ready.put(parent.stdout.readline()), daemon=True)
+        reader.start()
+        kernel, handles = None, []
+        try:
+            # Retain this fixture's handles while alive: never signal or poll a possibly reused PID.
+            kernel, handles = self._retain_processes(json.loads(ready.get(timeout=60)))
+            parent.stdin.close()  # The fixture now calls TerminateProcess on itself, without cleanup.
+            parent.wait(10)
+            self.assertEqual(parent.returncode, 15, parent.stderr.read()[-500:])
+            deadline = time.monotonic() + 5
+            for handle in handles:
+                remaining = max(0, int((deadline - time.monotonic()) * 1000))
+                self.assertEqual(kernel.WaitForSingleObject(handle, remaining), 0,
+                                 "A desktop process outlived its forcibly stopped parent")
+        finally:
+            if parent.poll() is None:
+                parent.kill()  # Our direct base-interpreter Popen handle owns this parent and its job.
+                parent.wait(5)
+            for pipe in (parent.stdin, parent.stdout, parent.stderr):
+                pipe.close()
+            reader.join(5)
+            if kernel:
+                for handle in handles:
+                    kernel.CloseHandle(handle)
 
 
 class CloseFallbackTests(unittest.TestCase):
