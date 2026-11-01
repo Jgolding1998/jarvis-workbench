@@ -33,10 +33,10 @@ body { margin:0; min-height:100vh; background:var(--bg); }
 a { color:var(--cyan); }
 .shell { max-width:640px; margin:0 auto; padding:18px 18px 28px; }
 .top { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:22px; }
-.brand { display:inline-flex; align-items:center; gap:10px; font:750 18px/1 "Segoe UI",system-ui,sans-serif; letter-spacing:-.3px; color:var(--text); }
+.brand { display:inline-flex; align-items:center; gap:10px; font:600 18px/1 "Segoe UI",system-ui,sans-serif; letter-spacing:-.2px; color:var(--text); }
 .brand .light { color:var(--muted); font-weight:400; }
 .mark { width:30px; height:30px; color:var(--text); }
-.badge { border:1px solid var(--line-2); border-radius:6px; color:var(--muted); background:var(--sunk); padding:5px 10px; font:700 11px var(--mono); letter-spacing:2px; white-space:nowrap; }
+.badge { border:1px solid var(--line-2); border-radius:6px; color:var(--muted); background:var(--sunk); padding:5px 10px; font:600 11px var(--mono); letter-spacing:.02em; white-space:nowrap; }
 main { outline:none; }
 .card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:26px; box-shadow:0 10px 30px -22px #3a2a1a55; }
 .card::before { content:none; }
@@ -44,8 +44,8 @@ h1 { font-size:clamp(24px,5vw,30px); font-weight:700; letter-spacing:-.5px; line
 h1 label { font:inherit; }
 h1:focus { outline:none; }
 h1:focus-visible { outline:2px dashed var(--line-2); outline-offset:4px; }
-h2 { font-size:12.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:22px 0 10px; }
-.eyebrow { font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--cyan); margin:0 0 8px; }
+h2 { font-size:14px; font-weight:600; color:var(--muted); margin:24px 0 8px; }
+.eyebrow { font-size:13px; font-weight:500; color:var(--cyan); margin:0 0 8px; }
 .progress { display:grid; gap:6px; margin-bottom:18px; }
 .progress-text { margin:0; font:600 13px var(--mono); letter-spacing:1px; color:var(--muted); }
 .progress-bar { height:6px; border-radius:3px; background:var(--sunk); overflow:hidden; }
@@ -81,7 +81,7 @@ input[type=range]:focus-visible { outline:2px solid var(--amber); outline-offset
 .stack { list-style:none; padding:0; margin:0; display:grid; gap:0; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
 .stack li { display:grid; grid-template-columns:110px minmax(0,1fr) auto; gap:10px; align-items:center; padding:9px 12px; border-top:1px solid var(--line); font-size:15px; }
 .stack li:first-child { border-top:0; }
-.stack .part { font-size:12px; font-weight:700; letter-spacing:.06em; color:var(--muted); text-transform:uppercase; }
+.stack .part { font-size:13px; font-weight:500; color:var(--muted); }
 .stack .name { display:flex; gap:10px; flex-wrap:wrap; align-items:baseline; min-width:0; overflow-wrap:anywhere; }
 .stack .guide { font-size:13px; }
 .stack .tag { font:700 11px var(--mono); letter-spacing:.5px; padding:3px 8px; border-radius:5px; border:1px solid #c6dabf; background:var(--live-wash); color:var(--live); white-space:nowrap; }
@@ -106,7 +106,7 @@ input[type=range]:focus-visible { outline:2px solid var(--amber); outline-offset
 .meter-row { display:flex; justify-content:space-between; gap:10px; font-size:13px; font-weight:600; flex-wrap:wrap; }
 .mono { font-family:var(--mono); color:var(--muted); font-weight:400; }
 meter { width:100%; height:8px; }
-.button { font:inherit; font-size:15px; font-weight:650; cursor:pointer; border-radius:10px; padding:11px 18px; min-height:48px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; text-align:center; border:1px solid var(--line-2); background:var(--panel); color:var(--text); transition:background .15s ease; }
+.button { font:inherit; font-size:15px; font-weight:600; cursor:pointer; border-radius:10px; padding:11px 18px; min-height:48px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; text-align:center; border:1px solid var(--line-2); background:var(--panel); color:var(--text); transition:background .15s ease; }
 .button:hover { background:var(--sunk); }
 .button.primary { background:var(--cyan); border-color:var(--cyan); color:var(--cyan-ink); }
 .button.primary:hover { background:var(--cyan-2); }

@@ -136,6 +136,10 @@ If the camera cannot open or its reader fails, restart the process after resolvi
 
 ## References
 
+Interface refinement used [Unslop](https://github.com/heydamir/unslop) by Damir
+Sokolovsky, licensed under CC BY 4.0, while retaining Jarvis's own interaction
+and safety design.
+
 The implementation uses documented interfaces from [OpenCV](https://docs.opencv.org/4.x/d5/d33/structcv_1_1HOGDescriptor.html), [Vosk](https://alphacephei.com/vosk/install), and Microsoft's [LockWorkStation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation) and [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate) APIs. The Windows package includes third-party dependencies and the official hand model with their license notices. No account credentials are included. This project's own code uses the [MIT License](LICENSE).
 
 ## Feedback
