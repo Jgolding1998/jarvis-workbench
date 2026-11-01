@@ -117,6 +117,7 @@ const server = http.createServer((req, res) => {
     if (p === "/setup" || p === "/setup.html") return serveFile(res, path.join(WEB, "setup.html"));
     if (p === "/hosted/setup.html") return serveFile(res, path.join(WEB, "setup.html"), (text) => text.replace('name="jarvis-mode" content="auto"', 'name="jarvis-mode" content="hosted"'));
     const name = p.replace(/^\/(hosted\/)?/, "");
+    if (name === "quickstart-catalog.json" && mock.holdCatalog) { mock.heldCatalog = res; return; }
     if (name === "quickstart-catalog.json" && mock.catalogText !== null) { res.writeHead(200, {"Content-Type": "application/json"}); return res.end(mock.catalogText); }
     if (["setup.js", "setup.css", "quickstart-catalog.json", "favicon.svg"].includes(name)) return serveFile(res, path.join(WEB, name));
     if (p === "/" || p === "/dashboard") { res.writeHead(200, {"Content-Type": "text/html"}); return res.end("<!doctype html><title>Dashboard fixture</title><p id=dash>dashboard</p>"); }
@@ -451,9 +452,9 @@ async function localFlow() {
   equal(mock.requests.filter((r) => r.method === "POST").length, 0, "nothing saved before the last question");
 
   // A failed save keeps the last question open and recovers on retry.
-  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
+  route("POST /api/quickstart/save", (req, res) => json(res, 400, {error: LEAK}));
   await click("#next");
-  await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.save)}`, "save error");
+  await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.saveUnknown)}`, "save error");
   equal(await currentStep(), "automation", "failed save stays on the last question");
   check(!(await evaluate("document.getElementById('next').disabled")), "Next is usable again after a failed save");
   equal(await focused(), "automation-title", "a failed save focuses the heading without opening a picker");
@@ -476,7 +477,7 @@ async function localFlow() {
   await evaluate("document.getElementById('key-input').focus()");
   await send("Input.insertText", {text: SECRET});
   await click('#key-form button[type="submit"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.key)}`, "key error");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.keyUnknown)}`, "key error");
   equal(await evaluate("document.getElementById('key-input').value"), "", "key field cleared after failure");
   equal(last("/api/quickstart/key").body, {provider: "nvidia", key: SECRET}, "key request body");
   await noSecretAnywhere("after key failure");
@@ -498,19 +499,30 @@ async function localFlow() {
   equal(await text("status"), MESSAGES.consent, "test needs consent");
   equal(mock.requests.length, before, "no test request without consent");
   await click("#consent");
-  route("POST /api/quickstart/test", (req, res) => json(res, 502, {error: LEAK}));
+  route("POST /api/quickstart/test", (req, res) => json(res, 400, {error: LEAK}));
   await click('[data-action="test"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.test)}`, "test error");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.replyLate)}`, "test error");
+  await waitIdle("test error reconciled");
   equal(last("/api/quickstart/test").body, {provider: "nvidia", consent: true}, "test body");
   route("POST /api/quickstart/test", (req, res) => json(res, 200, {ok: true}));
   await click('[data-action="test"]');
   await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.tested)}`, "test ok");
+  await waitIdle("test success settled");
   await click('[data-action="chat"]');
   equal(await text("status"), MESSAGES.promptEmpty, "chat needs a prompt");
   await evaluate("document.getElementById('prompt').value = 'Hello'");
+  const chatFailuresBefore = mock.requests.filter((item) => item.method === "POST" && item.path === "/api/quickstart/chat").length;
+  route("POST /api/quickstart/chat", (req, res) => json(res, 400, {error: LEAK}));
+  await click('[data-action="chat"]');
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.replyLate)}`, "chat error");
+  await waitIdle("400 chat and allowance refresh settled");
+  equal(mock.requests.filter((item) => item.method === "POST" && item.path === "/api/quickstart/chat").length, chatFailuresBefore + 1, "the400 chat sends exactly one request");
+  // An error reply may follow a provider call; the next separate action starts only after reconciliation.
   route("POST /api/quickstart/chat", (req, res) => json(res, 500, {error: LEAK}));
   await click('[data-action="chat"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.chat)}`, "chat error");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.replyLate)}`, "chat outcome unknown");
+  await waitIdle("500 chat and allowance refresh settled");
+  equal(mock.requests.filter((item) => item.method === "POST" && item.path === "/api/quickstart/chat").length, chatFailuresBefore + 2, "the separate500 chat sends exactly one further request");
   const reply = "<img src=x onerror=window.pwned=1> plain reply";
   route("POST /api/quickstart/chat", (req, res) => json(res, 200, {reply}));
 
@@ -561,7 +573,7 @@ async function localFlow() {
   equal(await text("status"), MESSAGES.readAloudPartial, "partial emoji read aloud is stated");
   route("POST /api/quickstart/chat", (req, res) => json(res, 200, {reply: "x".repeat(16001)}));
   await click('[data-action="chat"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.chat)}`, "over-limit reply rejected");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.replyLate)}`, "over-limit reply rejected as an unusable answer");
   check(!(await visible("chat-reply")), "over-limit reply is not shown");
   equal(await evaluate("window.__speech.spoken.length"), 5, "over-limit reply is not spoken");
   route("POST /api/quickstart/chat", (req, res) => json(res, 200, {reply}));
@@ -574,9 +586,9 @@ async function localFlow() {
   await shot("22-local-chat-read-aloud");
 
   // Key delete.
-  route("POST /api/quickstart/key/delete", (req, res) => json(res, 500, {error: LEAK}));
+  route("POST /api/quickstart/key/delete", (req, res) => json(res, 400, {error: LEAK}));
   await click('[data-action="key-delete"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.keyDelete)}`, "delete error");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.keyDeleteUnknown)}`, "delete error");
   route("POST /api/quickstart/key/delete", (req, res, body) => { mock.state.credentials[body.provider] = false; json(res, 200, mock.state); });
   await click('[data-action="key-delete"]');
   await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.keyDeleted)}`, "delete ok");
@@ -584,9 +596,32 @@ async function localFlow() {
   equal(last("/api/quickstart/key/delete").body, {provider: "nvidia"}, "delete body");
 
   // Install: failure, then running to ready, then error state.
-  route("POST /api/quickstart/install", (req, res) => json(res, 500, {error: LEAK}));
+  route("POST /api/quickstart/install", (req, res) => json(res, 400, {error: LEAK}));
   await click('[data-action="install"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.install)}`, "install error");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.installUnknown)}`, "install error");
+  check(await evaluate("document.getElementById('install').disabled"), "even a400 reply keeps Install locked until a status read");
+  await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installIdle)} && !document.getElementById('install').disabled`, "the first400 request is confirmed idle before the separate accepted-install cases", 10000);
+  equal(mock.requests.filter((r) => r.method === "POST" && r.path === "/api/quickstart/install").length, 1, "the idle reconciliation never retries the install POST");
+  // The service accepted the install but its reply was an error page or unreadable: Install stays off until a status read settles it.
+  for (const [label, reply] of [
+    // The real handler can emit400 after starting installation if its following snapshot fails.
+    ["400 reply after accepted install", (res) => json(res, 400, {error: LEAK})],
+    ["server error reply", (res) => json(res, 500, {error: LEAK})],
+    ["invalid JSON reply", (res) => { res.writeHead(200, {"Content-Type": "application/json"}); res.end("{not json"); }],
+    ["malformed state reply", (res) => json(res, 200, {install: "running"})]]) {
+    const installsBefore = mock.requests.filter((r) => r.method === "POST" && r.path === "/api/quickstart/install").length;
+    let reads = 0;
+    route("POST /api/quickstart/install", (req, res) => { mock.state.install = {state: "running", message: LEAK}; reply(res); });
+    route("GET /api/quickstart", (req, res) => { reads += 1; if (reads >= 2) mock.state.install = {state: "ready", message: LEAK}; json(res, 200, mock.state); });
+    await click('[data-action="install"]');
+    await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installUnknown)}`, label + " is an unknown outcome");
+    equal(await text("status"), MESSAGES.installUnknown, label + " does not claim the install did not start");
+    check(await evaluate("document.getElementById('install').disabled && document.getElementById('change').disabled && document.getElementById('launch').disabled"), label + " keeps Install, Change and Launch off");
+    await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installRunning)}`, label + " reconciled by a status read", 10000);
+    await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, label + " then ready", 10000);
+    equal(mock.requests.filter((r) => r.method === "POST" && r.path === "/api/quickstart/install").length, installsBefore + 1, label + " is never resubmitted");
+    delete mock.routes["GET /api/quickstart"];
+  }
   let polls = 0;
   route("POST /api/quickstart/install", (req, res) => { mock.state.install = {state: "running", message: LEAK}; json(res, 200, mock.state); });
   route("GET /api/quickstart", (req, res) => { polls += 1; if (polls >= 2) mock.state.install = {state: "ready", message: LEAK}; json(res, 200, mock.state); });
@@ -610,21 +645,26 @@ async function localFlow() {
   check(!(await evaluate("document.getElementById('launch').disabled")), "launch enabled once install is ready");
 
   // Launch: failure, unsafe address, exit failure, exit.
-  route("POST /api/quickstart/launch", (req, res) => json(res, 500, {error: LEAK}));
+  route("POST /api/quickstart/launch", (req, res) => json(res, 400, {error: LEAK}));
   await click('[data-action="launch"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.launch)}`, "launch error");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.launchUnknown)}`, "launch error");
   for (const url of ["http://evil.example/", "javascript:alert(1)", "http://127.0.0.1:8080/x", "http://127.0.0.1.evil.example:80/"]) {
     route("POST /api/quickstart/launch", (req, res) => json(res, 200, {url}));
     await evaluate("document.getElementById('status').textContent = ''");
     await click('[data-action="launch"]');
-    await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.launch)}`, "unsafe launch " + url);
+    await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.launchUnknown)}`, "unsafe launch " + url);
     check((await evaluate("location.pathname")) === "/setup", "no navigation to " + url);
   }
   equal(last("/api/quickstart/launch").body, {consent: true}, "launch body");
-  route("POST /api/setup/exit", (req, res) => json(res, 500, {error: LEAK}));
+  route("POST /api/setup/exit", (req, res) => json(res, 400, {error: LEAK}));
   await click('[data-action="exit"]');
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.exit)}`, "exit error");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.exitUnknown)}`, "exit error");
   route("POST /api/setup/exit", (req, res) => json(res, 200, {ok: true}));
+  await evaluate("document.getElementById('status').textContent = ''");
+  await click('[data-action="exit"]');
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.exitUnknown)}`, "unacknowledged exit");
+  check(!(await evaluate("document.body.classList.contains('closed')")), "a success reply without the stop acknowledgement does not close setup");
+  route("POST /api/setup/exit", (req, res) => json(res, 200, {stopped: true}));
   await click('[data-action="exit"]');
   await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.exited)}`, "exit ok");
   equal(last("/api/setup/exit").body, {}, "exit body");
@@ -686,9 +726,9 @@ async function localRegressions() {
   await send("Runtime.evaluate", {expression: "history.back()"});
   await waitFor("location.hash === '#automation'", "local browser Back");
   await select("automation", "calendar_email");
-  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
+  route("POST /api/quickstart/save", (req, res) => json(res, 400, {error: LEAK}));
   await send("Runtime.evaluate", {expression: "history.forward()"});
-  await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.save)}`, "Forward with a failed save");
+  await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.saveUnknown)}`, "Forward with a failed save");
   equal([await currentStep(), await evaluate("location.hash")], ["automation", "#automation"], "Forward with a failed save stays on the question");
   delete mock.routes["POST /api/quickstart/save"];
   await nextStep("plan");
@@ -753,9 +793,9 @@ async function localRegressions() {
   await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.imported)}`, "old file import");
   await waitIdle("old import");
   equal(mock.requests.filter((r) => r.method === "POST").map((r) => r.body), [{choices: full(old.choices)}], "an older choices file is migrated before saving");
-  route("POST /api/quickstart/save", (req, res) => json(res, 500, {error: LEAK}));
+  route("POST /api/quickstart/save", (req, res) => json(res, 400, {error: LEAK}));
   await setImportFile("valid-again.json", JSON.stringify(valid));
-  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.importSave)}`, "import save failure");
+  await waitFor(`document.getElementById('status').textContent === ${JSON.stringify(MESSAGES.saveUnknown)}`, "import save failure");
   await waitIdle("import save failure");
   await planMatches(full(old.choices), "plan kept after a failed import save");
   mock.routes = {};
@@ -786,12 +826,12 @@ async function localBudget() {
 
   // Test and chat refresh the allowance even when they fail.
   await click("#consent");
-  route("POST /api/quickstart/test", (req, res) => { mock.state.budget.reserved_usd = 0.13; mock.state.budget.remaining_usd = 24.87; mock.state.budget.paid_requests = 13; json(res, 502, {error: LEAK}); });
+  route("POST /api/quickstart/test", (req, res) => { mock.state.budget.reserved_usd = 0.13; mock.state.budget.remaining_usd = 24.87; mock.state.budget.paid_requests = 13; json(res, 400, {error: LEAK}); });
   const gets = mock.requests.filter((r) => r.method === "GET" && r.path === "/api/quickstart").length;
   await click('[data-action="test"]');
   await waitFor(`document.getElementById('meter-text').textContent.startsWith('$0.13')`, "meter refresh after failed test");
   check(mock.requests.filter((r) => r.method === "GET" && r.path === "/api/quickstart").length > gets, "state re-read after a failed test");
-  equal(await text("status"), MESSAGES.test, "failed test keeps its fixed message");
+  equal(await text("status"), MESSAGES.replyLate, "failed test keeps its fixed message");
   await evaluate("document.getElementById('prompt').value = 'Hi'");
   route("POST /api/quickstart/chat", (req, res) => { mock.state.budget.reserved_usd = 0.14; mock.state.budget.remaining_usd = 24.86; mock.state.budget.paid_requests = 14; json(res, 200, {reply: "ok"}); });
   await click('[data-action="chat"]');
@@ -834,9 +874,9 @@ async function localBudget() {
   const cases = [
     ["test", 400, {code: "budget_unavailable", error: CANARY}, MESSAGES.budgetPaused],
     ["chat", 400, {code: "budget_unavailable", error: CANARY}, MESSAGES.budgetPaused],
-    ["test", 400, {code: "other", error: CANARY}, MESSAGES.test],
-    ["chat", 500, {code: "budget_unavailable", error: CANARY}, MESSAGES.chat],
-    ["test", 400, ["budget_unavailable"], MESSAGES.test],
+    ["test", 400, {code: "other", error: CANARY}, MESSAGES.replyLate],
+    ["chat", 500, {code: "budget_unavailable", error: CANARY}, MESSAGES.replyLate],
+    ["test", 400, ["budget_unavailable"], MESSAGES.replyLate],
   ];
   for (const [action, statusCode, body, expected] of cases) {
     route("POST /api/quickstart/" + action, (req, res) => json(res, statusCode, body));
@@ -1052,6 +1092,239 @@ async function localInstallStatusRecovery() {
   mock.installOutcome = "ready";
 }
 
+/* Long browser-side waits (12 s or more) run on a virtual clock the test advances; shorter timers stay real.
+   Records each long wait so the per-operation limits can be checked. */
+const DEADLINE_CLOCK = `(() => {
+  const realSet = window.setTimeout.bind(window), realClear = window.clearTimeout.bind(window);
+  const held = new Map();
+  let id = 1e9, now = 0;
+  window.__deadlines = {seen: [], pending: () => [...held.values()].map((item) => item.delay).sort((a, b) => a - b),
+    advance(ms) { now += ms; for (const [key, item] of [...held]) if (item.due <= now) { held.delete(key); item.run(); } }};
+  window.setTimeout = (fn, delay, ...args) => {
+    if (typeof fn === "function" && Number(delay) >= 12000) {
+      id += 1; held.set(id, {run: () => fn(...args), due: now + Number(delay), delay: Number(delay)}); window.__deadlines.seen.push(Number(delay)); return id;
+    }
+    return realSet(fn, delay, ...args);
+  };
+  window.clearTimeout = (key) => { if (held.has(key)) held.delete(key); else realClear(key); };
+})();`;
+
+/* Held local responses: bounded waits with honest outcomes, Close setup outside the work lock, no automatic POST retries. */
+async function localHeldRequests() {
+  await viewport(1280, 900, false);
+  const clockScript = await send("Page.addScriptToEvaluateOnNewDocument", {source: DEADLINE_CLOCK});
+  const pending = (delay) => evaluate(`window.__deadlines.pending().includes(${delay})`);
+  const advance = (ms) => evaluate(`window.__deadlines.advance(${ms}), true`);
+  const posts = (pathname) => mock.requests.filter((item) => item.method === "POST" && item.path === pathname).length;
+  const gets = (pathname) => mock.requests.filter((item) => item.method === "GET" && item.path === pathname).length;
+  const statusIs = (message, label) => waitFor(`document.getElementById('status').textContent === ${JSON.stringify(message)}`, label);
+  const ready = full({role: "office", budget: 0, existing: "none"});
+  const plain = async (overrides) => {
+    mock.routes = {};
+    mock.holdCatalog = false;
+    mock.state = freshState(overrides);
+    mock.requests = [];
+    await open("/setup");
+  };
+  const held = {};
+  const hold = (name) => route(name, (req, res) => { held[name] = res; });
+  /* The browser abort reaches the mock socket asynchronously. */
+  const gone = async (res) => { for (let tries = 0; res && !res.destroyed && tries < 100; tries += 1) await sleep(20); return Boolean(res && res.destroyed); };
+  const heldNow = async (name) => {
+    for (let tries = 0; !held[name] && tries < 100; tries += 1) await sleep(30);
+    check(Boolean(held[name]), name + " is held by the mock");
+  };
+
+  try {
+    // 1. Startup: a held catalog, session or state read ends at a fixed message instead of an endless LOADING page.
+    mock.routes = {};
+    mock.state = freshState();
+    mock.requests = [];
+    mock.holdCatalog = true;
+    mock.heldCatalog = null;
+    await navigate(origin + "/setup");
+    await waitFor("window.__deadlines && window.__deadlines.pending().includes(15000)", "catalog wait armed");
+    equal(await text("mode-badge"), "LOADING", "held catalog is still loading before its deadline");
+    await advance(15000);
+    await waitFor("document.getElementById('mode-badge').textContent === 'UNAVAILABLE'", "catalog deadline");
+    equal(await text("notice"), MESSAGES.catalog, "held catalog shows the fixed refresh message");
+    check(await gone(mock.heldCatalog), "the page stops waiting for the held catalog");
+    equal(mock.requests.length, 0, "no local API request without a catalog");
+    mock.holdCatalog = false;
+    for (const name of ["GET /api/session", "GET /api/quickstart"]) {
+      mock.routes = {};
+      mock.requests = [];
+      delete held[name];
+      hold(name);
+      await navigate(origin + "/setup");
+      await heldNow(name);
+      await waitFor("window.__deadlines.pending().includes(15000)", name + " wait armed");
+      equal(await text("mode-badge"), "LOADING", name + " held: still loading before its deadline");
+      await advance(15000);
+      await waitFor("!document.getElementById('notice').hidden", name + " deadline");
+      equal(await text("notice"), MESSAGES.local, name + " held: fixed local-service message");
+      check(await gone(held[name]), name + " held: the page stops waiting for it");
+      check(!(await visible("key-box")) && await evaluate("document.querySelectorAll('#key-input').length === 0"), name + " held: no key field without a local session");
+      equal(mock.requests.filter((item) => item.method === "POST").length, 0, name + " held: nothing is posted");
+    }
+
+    // 2. Save: no answer in time. A fresh read decides; nothing is resubmitted automatically.
+    await plain();
+    await walk({role: "office", budget: 0, existing: "none"}, true);
+    hold("POST /api/quickstart/save");
+    await click("#next");
+    await heldNow("POST /api/quickstart/save");
+    check(await pending(30000), "save waits up to 30 seconds");
+    check(await evaluate("document.getElementById('next').disabled"), "the question stays locked while saving");
+    await advance(30000);
+    await waitFor(`document.getElementById('step-error').textContent === ${JSON.stringify(MESSAGES.saveUnknown)}`, "save outcome unknown");
+    equal(await currentStep(), "automation", "unconfirmed save keeps the last question open");
+    check(!(await evaluate("document.getElementById('next').disabled")), "Next is usable after an unconfirmed save");
+    equal(posts("/api/quickstart/save"), 1, "an unconfirmed save is not resubmitted automatically");
+    check(gets("/api/quickstart") >= 2, "an unconfirmed save is checked with a status read");
+    delete held["POST /api/quickstart/save"];
+    route("POST /api/quickstart/save", (req, res, body) => { mock.state.choices = lib.validateChoices(body.choices, catalog); held["POST /api/quickstart/save"] = res; });
+    await click("#next");
+    await heldNow("POST /api/quickstart/save");
+    await advance(30000);
+    await waitFor("!document.getElementById('result').hidden", "late-applied save reconciled");
+    equal(posts("/api/quickstart/save"), 2, "a save the service applied late is recognised without another save");
+    await noSecretAnywhere("after held saves");
+
+    // 3. Paid chat: no reply in time. The page does not claim nothing was sent and does not retry.
+    const paid = catalog.existing.find((item) => ["openai", "anthropic"].includes(item.paid));
+    await plain({choices: full({role: "office", budget: 25, existing: paid.id}), credentials: {nvidia: false, openai: true, anthropic: true}});
+    await waitFor("!document.getElementById('ai-box').hidden", "paid chat available");
+    await evaluate("document.getElementById('ai-box').open = true");
+    await click("#consent");
+    await evaluate("document.getElementById('prompt').value = 'Hello'");
+    hold("POST /api/quickstart/chat");
+    await click('[data-action="chat"]');
+    await heldNow("POST /api/quickstart/chat");
+    check(await pending(75000), "a provider request waits up to 75 seconds (service limit 45 s plus transfer)");
+    await sleep(200);
+    equal(await text("status"), "", "no outcome is reported before the provider wait ends");
+    const readsBefore = gets("/api/quickstart");
+    await advance(75000);
+    await statusIs(MESSAGES.replyLate, "chat no reply in time");
+    check(await gone(held["POST /api/quickstart/chat"]), "the page stops waiting for the held chat reply");
+    check(!(await visible("chat-reply")), "no reply is shown");
+    for (let tries = 0; gets("/api/quickstart") === readsBefore && tries < 60; tries += 1) await sleep(30);
+    check(gets("/api/quickstart") > readsBefore, "allowance state is re-read after an unanswered paid request");
+    equal(posts("/api/quickstart/chat"), 1, "an unanswered paid request is never retried automatically");
+    equal(await evaluate("window.__speech.spoken.length"), 0, "nothing is read aloud without a reply");
+    await waitFor("!document.querySelector('[data-action=\"chat\"]').disabled", "Ask usable again");
+
+    // 4. Install: no answer in time. Install stays off until a status read settles it; it is never resubmitted.
+    await plain({choices: ready, plan: lib.recommend(ready, catalog)});
+    route("POST /api/quickstart/install", (req, res) => { mock.state.install = {state: "running", message: LEAK}; held.install = res; });
+    route("GET /api/quickstart", (req, res) => json(res, 503, {error: LEAK}));
+    await click('[data-action="install"]');
+    for (let tries = 0; !held.install && tries < 100; tries += 1) await sleep(30);
+    check(await pending(30000), "the install request waits up to 30 seconds");
+    await advance(30000);
+    await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installUnknown)}`, "install outcome unknown");
+    check(await evaluate("['install', 'launch', 'change'].every((id) => document.getElementById(id).disabled)"), "unconfirmed install keeps Install, Open dashboard and Change answers off");
+    await statusIs(MESSAGES.installChecking, "failed status reads during unknown install");
+    check(await evaluate("document.getElementById('install').disabled"), "failed status reads never re-enable Install");
+    delete mock.routes["GET /api/quickstart"];
+    await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installRunning)}`, "status read finds the running install", 15000);
+    equal(await text("status"), "", "the reconciled state replaces the uncertainty message");
+    check(await evaluate("document.getElementById('install').disabled"), "the running install still blocks a duplicate");
+    mock.state.install = {state: "ready", message: LEAK};
+    await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installReady)}`, "install finishes", 15000);
+    equal(posts("/api/quickstart/install"), 1, "an unconfirmed install is never resubmitted");
+    await plain({choices: ready, plan: lib.recommend(ready, catalog)});
+    delete held.install;
+    route("POST /api/quickstart/install", (req, res) => { held.install = res; });
+    await click('[data-action="install"]');
+    for (let tries = 0; !held.install && tries < 100; tries += 1) await sleep(30);
+    await advance(30000);
+    await waitFor(`document.getElementById('install-state').textContent === ${JSON.stringify(MESSAGES.installIdle)}`, "status read shows the install never started", 15000);
+    check(!(await evaluate("document.getElementById('install').disabled")), "Install returns only after the service reports it idle");
+    equal(posts("/api/quickstart/install"), 1, "the idle result does not trigger an automatic install");
+
+    // 5. Launch: no answer in time. It may still be starting; no navigation from a late reply.
+    await plain({choices: ready, install: {state: "ready", message: LEAK}});
+    hold("POST /api/quickstart/launch");
+    const launchReads = gets("/api/quickstart");
+    await click('[data-action="launch"]');
+    await heldNow("POST /api/quickstart/launch");
+    check(await pending(90000), "launch waits up to 90 seconds (desktop startup 45 s plus bounded cleanup)");
+    await advance(90000);
+    await statusIs(MESSAGES.launchUnknown, "launch outcome unknown");
+    check(gets("/api/quickstart") > launchReads, "an unconfirmed launch re-reads the setup state");
+    try { held["POST /api/quickstart/launch"].end(JSON.stringify({url: origin + "/"})); } catch (error) { /* the page already stopped waiting */ }
+    await sleep(300);
+    equal(await evaluate("location.pathname"), "/setup", "a late launch reply cannot navigate the page");
+    equal(posts("/api/quickstart/launch"), 1, "an unconfirmed launch is not resubmitted");
+
+    // 6. Close setup while an install request is held: it is sent, guarded against repeats, and needs the acknowledgement.
+    await plain({choices: ready, plan: lib.recommend(ready, catalog)});
+    delete held.install;
+    route("POST /api/quickstart/install", (req, res) => { held.install = res; });
+    await click('[data-action="install"]');
+    for (let tries = 0; !held.install && tries < 100; tries += 1) await sleep(30);
+    check(await evaluate("document.getElementById('install').disabled"), "Install is locked while its request is pending");
+    for (const [label, handler, message] of [
+      ["400 exit without acknowledgement", (req, res) => json(res, 400, {error: LEAK}), MESSAGES.exitUnknown],
+      ["server error exit", (req, res) => json(res, 500, {error: LEAK}), MESSAGES.exitUnknown],
+      ["unacknowledged exit", (req, res) => json(res, 200, {}), MESSAGES.exitUnknown]]) {
+      route("POST /api/setup/exit", handler);
+      const before = posts("/api/setup/exit");
+      await click('[data-action="exit"]');
+      await statusIs(message, label);
+      equal(posts("/api/setup/exit"), before + 1, label + " is sent while other work is pending");
+      check(!(await evaluate("document.body.classList.contains('closed')")), label + " leaves setup open");
+      check(!(await evaluate("document.querySelector('[data-action=\"exit\"]').disabled")), label + " leaves Close setup usable");
+    }
+    delete held["POST /api/setup/exit"];
+    hold("POST /api/setup/exit");
+    const exitsBefore = posts("/api/setup/exit");
+    await click('[data-action="exit"]');
+    await heldNow("POST /api/setup/exit");
+    equal(await text("status"), MESSAGES.exiting, "a pending exit is announced");
+    check(await evaluate("document.querySelector('[data-action=\"exit\"]').disabled"), "Close setup is disabled while its request is pending");
+    await click('[data-action="exit"]');
+    await evaluate("document.querySelector('[data-action=\"exit\"]').disabled = false; document.querySelector('[data-action=\"exit\"]').click()");
+    await sleep(200);
+    equal(posts("/api/setup/exit"), exitsBefore + 1, "repeated Close setup clicks send one exit request");
+    check(await pending(15000), "the exit request waits up to 15 seconds");
+    await advance(15000);
+    await statusIs(MESSAGES.exitUnknown, "exit outcome unknown");
+    check(!(await evaluate("document.body.classList.contains('closed')")), "an unanswered exit does not claim setup closed");
+    check(await gone(held["POST /api/setup/exit"]), "the page stops waiting for the held exit");
+    check(!held.install.destroyed, "the unrelated install request is still pending");
+    route("POST /api/setup/exit", (req, res) => json(res, 200, {stopped: true}));
+    await click('[data-action="exit"]');
+    await statusIs(MESSAGES.exited, "acknowledged exit during held install");
+    check(await evaluate("[...document.querySelectorAll('button, select, input, textarea')].every((node) => node.disabled)"), "acknowledged exit disables every control");
+    check(await gone(held.install), "after the acknowledgement the page stops waiting for the held install");
+    try { held.install.end(JSON.stringify(Object.assign({}, mock.state, {install: {state: "ready", message: LEAK}}))); } catch (error) { /* already closed */ }
+    await advance(120000);
+    await sleep(1800);
+    equal(await text("status"), MESSAGES.exited, "late replies and expired waits cannot overwrite the closed state");
+    check(await evaluate("document.body.classList.contains('closed') && document.getElementById('install').disabled && document.getElementById('launch').disabled"), "late replies cannot re-enable closed controls");
+    equal(posts("/api/quickstart/install"), 1, "the held install is never resubmitted");
+    equal(mock.requests.filter((item) => item.method === "GET" && item.path === "/api/quickstart").length, 1, "closed setup starts no status reads");
+
+    // 7. Hosted page: no loopback request and no key field, even with the waits in place.
+    mock.routes = {};
+    mock.requests = [];
+    await open("/hosted/setup.html");
+    equal(mock.requests.length, 0, "hosted page sends no local API request");
+    equal(await evaluate("document.querySelectorAll('input[type=password], #key-input').length"), 0, "hosted page has no key field");
+    equal(await evaluate("window.__deadlines.seen"), [15000], "hosted page only waits for its own catalog");
+
+    check(mock.requests.every((item) => item.method !== "POST" || item.token === TOKEN), "every held-request POST carries the session token");
+    await noSecretAnywhere("after held requests");
+  } finally {
+    await send("Page.removeScriptToEvaluateOnNewDocument", {identifier: clockScript.identifier});
+    mock.routes = {};
+    mock.holdCatalog = false;
+  }
+}
+
 async function main() {
   const browser = findBrowser();
   const missing = !browser ? "No Chromium-based browser found (set JARVIS_TEST_BROWSER)" :
@@ -1121,6 +1394,7 @@ async function main() {
     await localReadAloudGuard();
     await localBundledPackage();
     await localInstallStatusRecovery();
+    await localHeldRequests();
     await websitePages();
     equal(external, [], "no requests left the local fixture server");
     check(!consoleText.join(" ").includes(SECRET), "key never logged to the console");

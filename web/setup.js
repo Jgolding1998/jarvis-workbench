@@ -496,6 +496,10 @@
 /* Fixed, input-free messages. Server error text is never shown. */
 const MESSAGES = {
   catalog: "Setup could not load. Refresh the page to try again.",
+  saveUnknown: "Jarvis did not confirm that your answers were saved. They may have been saved. Try again to be sure.",
+  keyUnknown: "Jarvis did not confirm the key. It may have been saved. The field was cleared; the key status here shows what Jarvis reports now.",
+  keyDeleteUnknown: "Jarvis did not confirm removing the key. It may have been removed. The key status here shows what Jarvis reports now.",
+  replyLate: "Jarvis did not return a usable answer. The provider may still have received the request, and a paid attempt may still count toward the allowance. Wait a moment before trying again.",
   local: "Jarvis could not reach its setup service on this computer. Close this page and open the Jarvis start file again.",
   query: "That link had choices this page does not recognize, so the questions start from the beginning.",
   save: "Your answers were not saved on this computer. Choose See my plan to try again.",
@@ -516,6 +520,7 @@ const MESSAGES = {
   readAloudOff: "Read aloud is off when Jarvis starts with offline voice commands. This keeps replies from being heard as commands. Typed questions and replies still work.",
   stopped: "Stopped reading aloud.",
   install: "Install did not start. Try again.",
+  installUnknown: "Jarvis did not confirm the install request. It may have started. Install stays off until Jarvis reports its status.",
   installIdle: "Downloads only what your plan needs. Nothing is switched on.",
   installRunning: "Installing. You can keep this page open.",
   installChecking: "The install status is temporarily unavailable. It may still be running; checking again shortly.",
@@ -524,9 +529,12 @@ const MESSAGES = {
   installIncluded: "This Jarvis package already includes the selected tools, so there is nothing to install. Nothing is switched on. Choose Open dashboard when you are ready.",
   installError: "Install stopped before finishing. Check your internet connection, then choose Install selected tools again.",
   launch: "The dashboard did not open. Try again, or close Jarvis and open its start file again.",
+  launchUnknown: "Jarvis did not confirm whether the dashboard opened. It may still be starting. Wait a moment, then choose Open dashboard again.",
   launchWait: "Install the selected tools first. The dashboard opens once they are ready.",
   exit: "Setup could not close itself. Close the Jarvis window to stop it.",
-  exited: "Setup closed. You can close this page.",
+  exiting: "Asking Jarvis to close setup...",
+  exitUnknown: "Jarvis did not confirm that setup closed. It may still be running. Close the Jarvis window to stop it.",
+  exited: "Close request accepted. Setup is closing; you can close this page.",
   copied: "Link copied. Open it on your Windows computer.",
   copyFailed: "Select the link above and copy it yourself.",
   savedJson: "Choices saved. The file holds your six answers only, nothing secret.",
@@ -552,7 +560,11 @@ function boot(api) {
   const forced = meta ? meta.content : "auto";
   const RESULT = STEPS.length;
   const state = {catalog: null, choices: null, step: 0, token: "", local: false, server: null, phone: false, busy: false, pollGeneration: 0, pollAbort: null,
-    touched: new Set(), reader: null, speaking: false};
+    touched: new Set(), reader: null, speaking: false, exiting: false, installUnknown: false, requests: new Set()};
+  /* Browser-side waits, including the response body. Each allows the service's own limits (45 s provider requests,
+     45 s desktop startup plus bounded cleanup) to finish first. A timeout only stops waiting in this page;
+     it never cancels work the service has already accepted. */
+  const WAIT_MS = {read: 15000, save: 30000, key: 30000, provider: 75000, install: 30000, launch: 90000, exit: 15000};
   const money = (value) => "$" + value.toFixed(2);
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const control = (index) => (STEPS[index] === "budget" ? $("budget") : $(STEPS[index]));
@@ -568,6 +580,7 @@ function boot(api) {
     return node;
   }
   function status(message, bad) {
+    if (closed() && message !== MESSAGES.exited) return;
     $("status").textContent = message;
     $("status").classList.toggle("bad", Boolean(bad));
   }
@@ -582,24 +595,57 @@ function boot(api) {
     $("notice").hidden = !message;
   }
 
-  async function localJson(path, body, signal) {
-    if (!api.isLoopbackPage(location, forced) || (!state.local && path !== "/api/session" && path !== "/api/quickstart")) throw new Error("not local");
-    const options = body === undefined ? {cache: "no-store"} : {method: "POST", cache: "no-store", headers: {"Content-Type": "application/json", "X-Jarvis-Token": state.token}, body: JSON.stringify(body)};
-    if (signal) options.signal = signal;
-    const response = await fetch(path, options);
-    if (!response.ok) {
-      /* Only one error code is understood; any other body, including its text, is ignored. */
-      const failure = new Error("request failed");
-      try {
-        const answer = await response.json();
-        failure.budget = response.status === 400 && answer !== null && typeof answer === "object" && answer.code === "budget_unavailable";
-      } catch (error) { failure.budget = false; }
-      throw failure;
+  /* Runs fetch plus body reading under one deadline. On timeout the error has late = true: the outcome is unknown. */
+  async function bounded(waitMs, signal, work) {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    if (signal) { if (signal.aborted) stop(); else signal.addEventListener("abort", stop, {once: true}); }
+    state.requests.add(controller);
+    let timer;
+    const deadline = new Promise((resolve, reject) => {
+      timer = setTimeout(() => { const late = new Error("no answer in time"); late.late = true; reject(late); stop(); }, waitMs);
+    });
+    const running = work(controller.signal);
+    running.catch(() => {});
+    try { return await Promise.race([running, deadline]); } finally {
+      clearTimeout(timer);
+      stop();
+      state.requests.delete(controller);
+      if (signal) signal.removeEventListener("abort", stop);
     }
-    return response.json();
   }
-  const closed = () => document.body.classList.contains("closed");
-  const installing = () => Boolean(state.local && state.server && state.server.install === "running");
+  async function localJson(path, body, signal, waitMs) {
+    if (!api.isLoopbackPage(location, forced) || (!state.local && path !== "/api/session" && path !== "/api/quickstart")) throw refusal("not local");
+    if (closed()) throw refusal("closed");
+    const result = await bounded(waitMs || WAIT_MS.read, signal, async (abort) => {
+      const options = body === undefined ? {cache: "no-store"} : {method: "POST", cache: "no-store", headers: {"Content-Type": "application/json", "X-Jarvis-Token": state.token}, body: JSON.stringify(body)};
+      options.signal = abort;
+      const response = await fetch(path, options);
+      if (!response.ok) {
+        /* Only one error code is understood; any other body, including its text, is ignored. */
+        const failure = new Error("request failed");
+        try {
+          const answer = await response.json();
+          const shaped = answer !== null && typeof answer === "object" && !Array.isArray(answer) && typeof answer.error === "string";
+          failure.budget = response.status === 400 && shaped && answer.code === "budget_unavailable";
+          /* An action can be applied before a later snapshot fails with this same 4xx error shape.
+             Only checks made before sending the request can prove that no action was attempted. */
+        } catch (error) { failure.budget = false; }
+        throw failure;
+      }
+      return response.json();
+    });
+    /* A reply that arrives after setup closed is never applied. */
+    if (closed()) throw new Error("closed");
+    return result;
+  }
+  function closed() { return document.body.classList.contains("closed"); }
+  /* An error raised before anything was sent. */
+  function refusal(message) { const error = new Error(message); error.refused = true; return error; }
+  /* A POST whose reply was lost, late, unreadable or malformed may still have been applied. */
+  const unknownOutcome = (error) => !error || !error.refused;
+  /* An unconfirmed install request counts as running until the service reports its state. */
+  const installing = () => Boolean(state.local && state.server && (state.server.install === "running" || state.installUnknown));
 
   /* One local request at a time: the question controls and the triggering button stay disabled until it settles. */
   function lockControls() {
@@ -608,7 +654,7 @@ function boot(api) {
     $("change").disabled = locked || installing();
   }
   async function act(button, work) {
-    if (state.busy) return;
+    if (state.busy || state.exiting || closed()) return;
     state.busy = true;
     if (button) button.disabled = true;
     lockControls();
@@ -713,9 +759,10 @@ function boot(api) {
       }
       let saved = false;
       await act(null, async () => { saved = await commit(state.choices); });
-      if (!saved) {
+      if (closed()) return;
+      if (saved !== true) {
         if (how.pop) history.replaceState({jarvisStep: state.step}, "", "#" + STEPS[state.step]);
-        stepError(MESSAGES.save);
+        stepError(saved === "unknown" ? MESSAGES.saveUnknown : MESSAGES.save);
         $(STEPS[state.step] + "-title").focus();
         return;
       }
@@ -723,13 +770,19 @@ function boot(api) {
     show(RESULT, {push: how.push, focus: true});
   }
 
+  /* true when saved, false when refused, "unknown" when no answer arrived in time and a fresh read
+     does not show the same answers saved. Saving is never retried automatically. */
   async function commit(choices) {
     try {
-      const server = applyServer(await localJson("/api/quickstart/save", {choices}));
+      const server = applyServer(await localJson("/api/quickstart/save", {choices}, null, WAIT_MS.save));
       state.choices = server.choices || choices;
       return true;
     } catch (error) {
-      return false;
+      if (!unknownOutcome(error) || closed()) return false;
+      await refresh();
+      const current = state.server && state.server.choices;
+      if (current && api.CHOICE_KEYS.every((key) => current[key] === choices[key])) { state.choices = current; return true; }
+      return "unknown";
     }
   }
 
@@ -828,13 +881,14 @@ function boot(api) {
       if (!$("speak-off")) $("speak-row").append(el("p", {id: "speak-off", className: "hint", text: MESSAGES.readAloudOff}));
     } else if ($("speak-off")) $("speak-off").remove();
     const install = server.install;
+    const unknown = state.installUnknown;
     $("install").hidden = server.included;
-    $("install").disabled = install === "running" || closed();
-    $("launch").disabled = install !== "ready" || closed();
+    $("install").disabled = install === "running" || unknown || closed();
+    $("launch").disabled = install !== "ready" || unknown || closed();
     $("install").textContent = install === "running" ? "Installing..." : install === "ready" ? "Install again" : "Install selected tools";
     $("install").className = "button " + (install === "ready" ? "ghost" : "primary");
     $("launch").className = "button " + (install === "ready" ? "primary" : "ghost");
-    $("install-state").textContent = server.included ? MESSAGES.installIncluded : MESSAGES[{idle: "installIdle", running: "installRunning", ready: "installReady", error: "installError"}[install]];
+    $("install-state").textContent = unknown ? MESSAGES.installUnknown : server.included ? MESSAGES.installIncluded : MESSAGES[{idle: "installIdle", running: "installRunning", ready: "installReady", error: "installError"}[install]];
     $("install-state").classList.toggle("bad", install === "error");
   }
 
@@ -842,6 +896,7 @@ function boot(api) {
     const next = api.readQuickstartState(data, state.catalog);
     if (!next) throw new Error("bad state");
     state.server = next;
+    state.installUnknown = false;
     if (!next.readAloud) refuseReadAloud();
     return next;
   }
@@ -881,10 +936,11 @@ function boot(api) {
     if (!value) { status(MESSAGES.keyEmpty, true); input.focus(); return; }
     await act(event.submitter || null, async () => {
       try {
-        applyServer(await localJson("/api/quickstart/key", {provider: plan.provider, key: value}));
+        applyServer(await localJson("/api/quickstart/key", {provider: plan.provider, key: value}, null, WAIT_MS.key));
         status(MESSAGES.keySaved);
       } catch (error) {
-        status(MESSAGES.key, true);
+        input.value = "";
+        if (unknownOutcome(error)) { await refresh(); status(MESSAGES.keyUnknown, true); } else status(MESSAGES.key, true);
       }
       input.value = "";
     });
@@ -892,7 +948,7 @@ function boot(api) {
 
   /* Paid attempts reserve allowance even when they fail, so re-read the service state afterwards. */
   async function refresh() {
-    try { applyServer(await localJson("/api/quickstart")); } catch (error) { /* keep the last known state */ }
+    try { applyServer(await localJson("/api/quickstart", undefined, null, WAIT_MS.read)); } catch (error) { /* keep the last known state */ }
   }
 
   function needConsent() {
@@ -920,7 +976,7 @@ function boot(api) {
         if (closed() || generation !== state.pollGeneration) return;
         applyServer(data);
         failures = 0;
-        if ([MESSAGES.installChecking, MESSAGES.installCheckLater].includes($("status").textContent)) status("");
+        if ([MESSAGES.installChecking, MESSAGES.installCheckLater, MESSAGES.installUnknown].includes($("status").textContent)) status("");
       } catch (error) {
         if (closed() || generation !== state.pollGeneration) return;
         failures += 1;
@@ -939,17 +995,19 @@ function boot(api) {
     async "key-delete"() {
       const plan = api.recommend(state.choices, state.catalog);
       try {
-        applyServer(await localJson("/api/quickstart/key/delete", {provider: plan.provider}));
+        applyServer(await localJson("/api/quickstart/key/delete", {provider: plan.provider}, null, WAIT_MS.key));
         status(MESSAGES.keyDeleted);
-      } catch (error) { status(MESSAGES.keyDelete, true); }
+      } catch (error) {
+        if (unknownOutcome(error)) { await refresh(); status(MESSAGES.keyDeleteUnknown, true); } else status(MESSAGES.keyDelete, true);
+      }
     },
     async test() {
       if (needConsent()) return;
       const plan = api.recommend(state.choices, state.catalog);
       try {
-        await localJson("/api/quickstart/test", {provider: plan.provider, consent: true});
+        await localJson("/api/quickstart/test", {provider: plan.provider, consent: true}, null, WAIT_MS.provider);
         status(MESSAGES.tested);
-      } catch (error) { status(error.budget ? MESSAGES.budgetPaused : MESSAGES.test, true); }
+      } catch (error) { status(error.budget ? MESSAGES.budgetPaused : unknownOutcome(error) ? MESSAGES.replyLate : MESSAGES.test, true); }
       await refresh();
     },
     async chat() {
@@ -960,7 +1018,7 @@ function boot(api) {
       stopSpeaking();
       const plan = api.recommend(state.choices, state.catalog);
       try {
-        const result = await localJson("/api/quickstart/chat", {provider: plan.provider, prompt, consent: true});
+        const result = await localJson("/api/quickstart/chat", {provider: plan.provider, prompt, consent: true}, null, WAIT_MS.provider);
         const reply = api.chatReply(result.reply);
         if (reply === null) throw new Error("bad reply");
         $("chat-reply").textContent = reply;
@@ -969,35 +1027,32 @@ function boot(api) {
         readAloud(reply);
       } catch (error) {
         $("chat-reply").hidden = true;
-        status(error.budget ? MESSAGES.budgetPaused : MESSAGES.chat, true);
+        status(error.budget ? MESSAGES.budgetPaused : unknownOutcome(error) ? MESSAGES.replyLate : MESSAGES.chat, true);
       }
       await refresh();
     },
     async install() {
       try {
-        applyServer(await localJson("/api/quickstart/install", {consent: true}));
+        applyServer(await localJson("/api/quickstart/install", {consent: true}, null, WAIT_MS.install));
         status("");
-      } catch (error) { status(MESSAGES.install, true); }
+      } catch (error) {
+        if (unknownOutcome(error) && !closed()) {
+          /* The request may have started an install. Keep Install off until a status read settles it. */
+          state.installUnknown = true;
+          status(MESSAGES.installUnknown, true);
+        } else status(MESSAGES.install, true);
+      }
       pollInstall();
     },
     async launch() {
-      if (state.server.install !== "ready") { status(MESSAGES.launchWait, true); return; }
+      if (state.server.install !== "ready" || state.installUnknown) { status(MESSAGES.launchWait, true); return; }
       try {
-        const result = await localJson("/api/quickstart/launch", {consent: true});
+        const result = await localJson("/api/quickstart/launch", {consent: true}, null, WAIT_MS.launch);
         if (!api.isSafeLaunchUrl(result.url)) throw new Error("unexpected address");
         location.assign(result.url);
-      } catch (error) { status(MESSAGES.launch, true); }
-    },
-    async exit() {
-      try {
-        await localJson("/api/setup/exit", {});
-        stopSpeaking();
-        document.body.classList.add("closed");
-        state.pollGeneration += 1;
-        if (state.pollAbort) state.pollAbort.abort();
-        document.querySelectorAll("button, input, select, textarea").forEach((node) => { node.disabled = true; });
-        status(MESSAGES.exited);
-      } catch (error) { status(MESSAGES.exit, true); }
+      } catch (error) {
+        if (unknownOutcome(error) && !closed()) { await refresh(); status(MESSAGES.launchUnknown, true); } else status(MESSAGES.launch, true);
+      }
     },
     async "import-choices"() {
       $("import-choices").click();
@@ -1033,9 +1088,39 @@ function boot(api) {
       show(0, {push: true, focus: true});
       return;
     }
+    if (button.dataset.action === "exit") { exitSetup(button); return; }
     if (!own(actions, button.dataset.action)) return;
     act(button, () => actions[button.dataset.action](button));
   });
+
+  /* Close setup works even while another request is pending. Only the service's acknowledgement closes the page;
+     then this page stops waiting for every pending request, so a late reply cannot reopen it. */
+  async function exitSetup(button) {
+    if (state.exiting || closed()) return;
+    state.exiting = true;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    status(MESSAGES.exiting);
+    let outcome = "failed";
+    try {
+      const answer = await localJson("/api/setup/exit", {}, null, WAIT_MS.exit);
+      outcome = answer !== null && typeof answer === "object" && answer.stopped === true ? "stopped" : "unknown";
+    } catch (error) { outcome = unknownOutcome(error) ? "unknown" : "failed"; }
+    state.exiting = false;
+    button.removeAttribute("aria-busy");
+    if (outcome !== "stopped") {
+      if (!closed()) button.disabled = false;
+      status(outcome === "unknown" ? MESSAGES.exitUnknown : MESSAGES.exit, true);
+      return;
+    }
+    stopSpeaking();
+    document.body.classList.add("closed");
+    state.pollGeneration += 1;
+    if (state.pollAbort) state.pollAbort.abort();
+    state.requests.forEach((controller) => controller.abort());
+    document.querySelectorAll("button, input, select, textarea").forEach((node) => { node.disabled = true; });
+    status(MESSAGES.exited);
+  }
   $("wizard").addEventListener("submit", (event) => { event.preventDefault(); next(); });
   $("back").addEventListener("click", () => { if (state.step > 0 && !state.busy) history.back(); });
   $("wizard").addEventListener("change", (event) => {
@@ -1091,10 +1176,11 @@ function boot(api) {
       } finally {
         input.value = "";
       }
-      if (await commit(next)) {
+      const saved = await commit(next);
+      if (saved === true) {
         SUGGESTED.forEach((key) => state.touched.add(key));
         status(MESSAGES.imported);
-      } else status(MESSAGES.importSave, true);
+      } else status(saved === "unknown" ? MESSAGES.saveUnknown : MESSAGES.importSave, true);
     });
   });
 
@@ -1112,9 +1198,12 @@ function boot(api) {
 
   async function start() {
     try {
-      const response = await fetch("quickstart-catalog.json", {cache: "no-store"});
-      if (!response.ok) throw new Error("catalog unavailable");
-      state.catalog = api.checkCatalog(api.parseImportJson(await response.text()));
+      const text = await bounded(WAIT_MS.read, null, async (signal) => {
+        const response = await fetch("quickstart-catalog.json", {cache: "no-store", signal});
+        if (!response.ok) throw new Error("catalog unavailable");
+        return response.text();
+      });
+      state.catalog = api.checkCatalog(api.parseImportJson(text));
       fillSelect("role", state.catalog.roles);
       ["existing", "dictation", "reply", "automation"].forEach((key) => fillSelect(key, state.catalog[key]));
       $("budget").max = String(state.catalog.budget.slider_max);
@@ -1129,10 +1218,10 @@ function boot(api) {
     let ready = false;
     if (api.isLoopbackPage(location, forced)) {
       try {
-        const session = await localJson("/api/session");
+        const session = await localJson("/api/session", undefined, null, WAIT_MS.read);
         if (!session || typeof session.token !== "string" || !session.token) throw new Error("no session");
         state.token = session.token;
-        const server = api.readQuickstartState(await localJson("/api/quickstart"), state.catalog);
+        const server = api.readQuickstartState(await localJson("/api/quickstart", undefined, null, WAIT_MS.read), state.catalog);
         if (!server) throw new Error("not local");
         state.local = true;
         state.server = server;
